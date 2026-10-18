@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/rta/gitops/internal/controller"
 	"github.com/rta/gitops/internal/git"
+	"github.com/rta/gitops/internal/kube"
+	"github.com/rta/gitops/internal/policy"
 	"github.com/rta/gitops/internal/server"
 )
 
@@ -23,6 +26,8 @@ func main() {
 	workdir := flag.String("workdir", "/tmp/gitops/checkout", "local checkout directory")
 	interval := flag.Duration("interval", time.Minute, "poll interval")
 	addr := flag.String("listen", ":8080", "HTTP listen address")
+	dryRun := flag.Bool("dry-run", true, "log diffs but never apply (set -dry-run=false to go live)")
+	namespaces := flag.String("namespaces", "", "comma-separated namespaces gitops may manage (required)")
 	flag.Parse() // flags are pointer, so read them without *repourl
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -35,10 +40,16 @@ func main() {
 		log.Warn("the secret is empty: /webhook accepts unsigned requests")
 	}
 
+	pol := policy.New(strings.Split(*namespaces, ","))
+	if pol.Empty() {
+		log.Error("-namespaces is required")
+		os.Exit(2)
+	}
+
 	ctrl := controller.New(
 		git.Repo{URL: *repoURL, Branch: *branch, Dir: *workdir},
 		*path, *interval,
-		controller.LogApplier{Log: log}, log,
+		kube.Applier{Policy: pol, DryRun: *dryRun, Log: log}, log,
 	)
 
 	// ctx is cancelled when you press ctrl + c or kuberetes sends sigterm

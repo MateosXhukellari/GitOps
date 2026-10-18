@@ -1,0 +1,17 @@
+# Built binary
+/gitops
+*.exe
+*.test
+*.out
+
+# Secrets and cluster credentials
+.env
+.env.*
+*kubeconfig*
+*.kubeconfig
+.kube/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
