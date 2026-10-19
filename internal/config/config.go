@@ -23,7 +23,8 @@ type Config struct {
 	AllowSecrets bool
 	Kubectl      string
 
-	WebhookSecret string // env or file only, never logged
+	WebhookSecret string
+	GitToken      string
 }
 
 func (c Config) LogValue() slog.Value {
@@ -37,6 +38,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Any("namespaces", c.Namespaces),
 		slog.Bool("allow_plaintext_secrets", c.AllowSecrets),
 		slog.Bool("webhook_secret_set", c.WebhookSecret != ""),
+		slog.Bool("git_token_set", c.GitToken != ""),
 	)
 }
 
@@ -49,7 +51,6 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 		}
 		return def
 	}
-
 	defDryRun, err := envBool(getenv, "GITOPS_DRY_RUN", true)
 	if err != nil {
 		return Config{}, err
@@ -80,7 +81,7 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 	}
 
 	if fs.NArg() > 0 {
-		return Config{}, fmt.Errorf("config: unexpected argument %q(fogot leading dash)", fs.Arg(0))
+		return Config{}, fmt.Errorf("config: unexpected argument %q (did you forget a leading dash?)", fs.Arg(0))
 	}
 	c.Namespaces = splitList(*namespaces)
 
@@ -88,6 +89,12 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 	if err != nil {
 		return Config{}, err
 	}
+
+	c.GitToken, err = secret(getenv, readFile, "GITOPS_GIT_TOKEN")
+	if err != nil {
+		return Config{}, err
+	}
+
 	if err := c.validate(); err != nil {
 		return Config{}, err
 	}
@@ -105,13 +112,17 @@ func (c Config) validate() error {
 	if c.Interval <= 0 {
 		problems = append(problems, "interval must be positive")
 	}
+	// A token that is silently not used would be worse than an error: the
+	// operator would think the repo is authenticated.
+	if c.GitToken != "" && !strings.HasPrefix(c.RepoURL, "https://") {
+		problems = append(problems, "a git token is set but the repo URL is not https://, so it would never be sent")
+	}
 	if len(problems) > 0 {
 		return errors.New("config: " + strings.Join(problems, "; "))
 	}
 	return nil
 }
 
-// secret reads NAME from the environment, or NAME_FILE from a file.
 func secret(getenv func(string) string, readFile func(string) ([]byte, error), name string) (string, error) {
 	val, file := getenv(name), getenv(name+"_FILE")
 	switch {
@@ -161,14 +172,13 @@ func splitList(s string) []string {
 	return out
 }
 
-// redactURL hides a password in https://user:token@host/repo.git.
 func redactURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		if strings.Contains(raw, "://") {
-			return "<unparseable url>" // might contain credentials
+			return "<unparseable url>"
 		}
-		return raw // e.g. git@github.com:org/repo.git has no password in it
+		return raw
 	}
 	return u.Redacted()
 }

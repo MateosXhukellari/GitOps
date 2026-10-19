@@ -48,7 +48,7 @@ func main() {
 	log.Info("configuration", "cfg", cfg) // safe: Config redacts its own secrets
 
 	ctrl := controller.New(
-		git.Repo{URL: cfg.RepoURL, Branch: cfg.Branch, Dir: cfg.Workdir},
+		git.Repo{URL: cfg.RepoURL, Branch: cfg.Branch, Dir: cfg.Workdir, Token: cfg.GitToken},
 		cfg.Path, cfg.Interval,
 		kube.Applier{Policy: pol, DryRun: cfg.DryRun, Log: log, Kubectl: kubectlPath}, log,
 	)
