@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitops
+  namespace: gitops-system
+spec:
+  replicas: 1          
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gitops
+  template:
+    metadata:
+      labels:
+        app: gitops
+    spec:
+      serviceAccountName: gitops
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gitops
+          image: gitops:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: GITOPS_REPO, value: "https://github.com/MateosXhukellari/DemoKubernetes.git" }
+            - { name: GITOPS_BRANCH, value: "main" }
+            - { name: GITOPS_PATH, value: "manifests" }
+            - { name: GITOPS_NAMESPACES, value: "demo" }
+            - { name: GITOPS_INTERVAL, value: "30s" }
+            - { name: GITOPS_LISTEN, value: ":8080" }
+            - { name: GITOPS_WORKDIR, value: "/tmp/checkout" }
+            - { name: GITOPS_DRY_RUN, value: "true" }   # flip to "false" to go live
+            - { name: GITOPS_WEBHOOK_SECRET_FILE, value: "/etc/gitops/webhook/secret" }
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: webhook, mountPath: /etc/gitops/webhook, readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: webhook
+          secret:
+            secretName: gitops-webhook

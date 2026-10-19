@@ -1,0 +1,4 @@
+.git
+gitops
+*.tar
+deploy
