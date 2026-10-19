@@ -9,10 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/rta/gitops/internal/config"
 	"github.com/rta/gitops/internal/controller"
 	"github.com/rta/gitops/internal/git"
 	"github.com/rta/gitops/internal/kube"
@@ -21,72 +21,56 @@ import (
 )
 
 func main() {
-	repoURL := flag.String("repo", "", "git repository URL (required)")
-	branch := flag.String("branch", "main", "branch to track")
-	path := flag.String("path", ".", "directory in the repo containig manifests")
-	workdir := flag.String("workdir", "/tmp/gitops/checkout", "local checkout directory")
-	interval := flag.Duration("interval", time.Minute, "poll interval")
-	addr := flag.String("listen", ":8080", "HTTP listen address")
-	dryRun := flag.Bool("dry-run", true, "log diffs but never apply (set -dry-run=false to go live)")
-	namespaces := flag.String("namespaces", "", "comma-separated namespaces gitops may manage (required)")
-	// GITOPS_KUBECTL only sets the default, so an explicit -kubectl still wins.
-	defKubectl := os.Getenv("GITOPS_KUBECTL")
-	if defKubectl == "" {
-		defKubectl = "kubectl"
-	}
-	kubectlBin := flag.String("kubectl", defKubectl, "kubectl binary: a name looked up in PATH, or a full path (env GITOPS_KUBECTL)")
-	flag.Parse() // flags are pointer, so read them without *repourl
-
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if *repoURL == "" {
-		log.Error("-repo is required")
+
+	cfg, err := config.Load(os.Args[1:], os.Getenv, os.ReadFile)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) { // -h: usage was already printed
+			os.Exit(0)
+		}
+		log.Error("invalid configuration", "err", err)
 		os.Exit(2)
 	}
-	secret := os.Getenv("GITOPS_WEBHOOK_SECRET")
-	if secret == "" {
+	if cfg.WebhookSecret == "" {
 		log.Warn("the secret is empty: /webhook accepts unsigned requests")
 	}
 
-	pol := policy.New(strings.Split(*namespaces, ","))
-	if pol.Empty() {
-		log.Error("-namespaces is required")
-		os.Exit(2)
-	}
+	pol := policy.New(cfg.Namespaces)
+	pol.AllowSecrets = cfg.AllowSecrets
 
 	// Resolve kubectl once, so a bad PATH fails at startup, not every cycle.
-	kubectlPath, err := exec.LookPath(*kubectlBin)
+	kubectlPath, err := exec.LookPath(cfg.Kubectl)
 	if err != nil {
-		log.Error("kubectl not found; set -kubectl or GITOPS_KUBECTL to its full path", "kubectl", *kubectlBin, "err", err)
+		log.Error("kubectl not found; set -kubectl or GITOPS_KUBECTL to its full path", "kubectl", cfg.Kubectl, "err", err)
 		os.Exit(2)
 	}
 	log.Info("using kubectl", "path", kubectlPath)
+	log.Info("configuration", "cfg", cfg) // safe: Config redacts its own secrets
 
 	ctrl := controller.New(
-		git.Repo{URL: *repoURL, Branch: *branch, Dir: *workdir},
-		*path, *interval,
-		kube.Applier{Policy: pol, DryRun: *dryRun, Log: log, Kubectl: kubectlPath}, log,
+		git.Repo{URL: cfg.RepoURL, Branch: cfg.Branch, Dir: cfg.Workdir},
+		cfg.Path, cfg.Interval,
+		kube.Applier{Policy: pol, DryRun: cfg.DryRun, Log: log, Kubectl: kubectlPath}, log,
 	)
 
-	// ctx is cancelled when you press ctrl + c or kuberetes sends sigterm
+	// ctx is cancelled on Ctrl+C or when Kubernetes sends SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           server.New(ctrl, secret),
+		Addr:              cfg.Listen,
+		Handler:           server.New(ctrl, cfg.WebhookSecret),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-
 		_ = srv.Shutdown(sctx)
 	}()
 	go ctrl.Run(ctx)
 
-	log.Info("gitops started", "repo", *repoURL, "listen", *addr)
+	log.Info("gitops started", "repo", cfg.RepoURL, "listen", cfg.Listen)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("server error", "err", err)
 		os.Exit(1)

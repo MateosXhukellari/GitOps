@@ -75,3 +75,29 @@ func TestEmptyPolicyRejectsEverything(t *testing.T) {
 		t.Fatal("empty policy must not allow anything")
 	}
 }
+
+func TestSecretsRejectedByDefault(t *testing.T) {
+	p := New([]string{"demo"})
+	rs := []manifest.Resource{
+		res("Secret", "demo", "db-password"),
+		res("SealedSecret", "demo", "db-password"), // encrypted form is fine
+	}
+
+	err := p.Check(rs)
+	if err == nil || !strings.Contains(err.Error(), "1 violation") || !strings.Contains(err.Error(), "plaintext") {
+		t.Fatalf("expected exactly one plaintext-secret violation, got %v", err)
+	}
+
+	// Explicit opt-in allows it.
+	p.AllowSecrets = true
+	if err := p.Check(rs); err != nil {
+		t.Fatalf("AllowSecrets should permit Secret, got %v", err)
+	}
+
+	// A Secret in a forbidden namespace reports both problems.
+	p.AllowSecrets = false
+	err = p.Check([]manifest.Resource{res("Secret", "kube-system", "x")})
+	if err == nil || !strings.Contains(err.Error(), "2 violation") {
+		t.Fatalf("expected 2 violations, got %v", err)
+	}
+}

@@ -9,6 +9,8 @@ import (
 
 type Policy struct {
 	allowed map[string]bool
+
+	AllowSecrets bool
 }
 
 func New(namespace []string) Policy {
@@ -28,6 +30,9 @@ func (p Policy) Check(rs []manifest.Resource) error {
 	var problems []string
 
 	for _, r := range rs {
+		if r.Kind == "Secret" && !p.AllowSecrets {
+			problems = append(problems, fmt.Sprintf("%s: Secret %q must not be stored in git in plaintext", r.File, r.Name))
+		}
 		switch {
 		case r.Kind == "Namespace":
 			if !p.allowed[r.Name] {
