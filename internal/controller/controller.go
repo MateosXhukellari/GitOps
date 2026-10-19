@@ -82,7 +82,6 @@ func (c *Controller) Reconcile(ctx context.Context) {
 	c.mu.Lock()
 	c.status.LastAttempt = time.Now()
 	c.status.ReconcileRuns++
-	applied := c.status.AppliedRev
 	c.mu.Unlock()
 
 	rev, err := c.Repo.Sync(ctx)
@@ -98,11 +97,9 @@ func (c *Controller) Reconcile(ctx context.Context) {
 
 	// only apply when commit changed
 	// last good revision is never overwritten
-	if rev != applied {
-		if err := c.Applier.Apply(ctx, rev, desired); err != nil {
-			c.fail("apply failed", err)
-			return
-		}
+	if err := c.Applier.Apply(ctx, rev, desired); err != nil {
+		c.fail("apply failed", err)
+		return
 	}
 
 	c.mu.Lock()

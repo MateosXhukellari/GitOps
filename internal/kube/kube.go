@@ -17,6 +17,8 @@ type Applier struct {
 	Policy policy.Policy
 	DryRun bool
 	Log    *slog.Logger
+	// Kubectl is the kubectl binary to run. Empty means "kubectl" from PATH.
+	Kubectl string
 }
 
 func (a Applier) Apply(ctx context.Context, revision string, desired []manifest.Resource) error {
@@ -45,7 +47,7 @@ func (a Applier) Apply(ctx context.Context, revision string, desired []manifest.
 	// ones can't be diffed yet. Skip them instead of failing the whole commit.
 	if a.DryRun {
 		var err error
-		if rest, err = skipPending(ctx, log, nss, rest); err != nil {
+		if rest, err = a.skipPending(ctx, log, nss, rest); err != nil {
 			return err
 		}
 	}
@@ -60,7 +62,7 @@ func (a Applier) diffApply(ctx context.Context, log *slog.Logger, revision strin
 	stream := join(rs)
 
 	// kubectl diff: exit 0 = same, 1 = differences, >1 = real error.
-	out, code, err := kubectl(ctx, stream, "diff", "--server-side", "-f", "-")
+	out, code, err := a.kubectl(ctx, stream, "diff", "--server-side", "--force-conflicts", "--field-manager=gitops", "-f", "-")
 	if err != nil && code != 1 {
 		return err
 	}
@@ -75,7 +77,7 @@ func (a Applier) diffApply(ctx context.Context, log *slog.Logger, revision strin
 		return nil
 	}
 
-	if _, _, err := kubectl(ctx, stream, "apply", "--server-side", "--field-manager=gitops", "-f", "-"); err != nil {
+	if _, _, err := a.kubectl(ctx, stream, "apply", "--server-side", "--force-conflicts", "--field-manager=gitops", "-f", "-"); err != nil {
 		return err
 	}
 	log.Info("applied", "revision", revision, "resources", len(rs))
@@ -95,7 +97,7 @@ func splitNamespaces(rs []manifest.Resource) (nss, rest []manifest.Resource) {
 
 // skipPending drops resources that live in a namespace declared in git but not
 // yet present in the cluster.
-func skipPending(ctx context.Context, log *slog.Logger, nss, rest []manifest.Resource) ([]manifest.Resource, error) {
+func (a Applier) skipPending(ctx context.Context, log *slog.Logger, nss, rest []manifest.Resource) ([]manifest.Resource, error) {
 	if len(nss) == 0 {
 		return rest, nil
 	}
@@ -104,7 +106,7 @@ func skipPending(ctx context.Context, log *slog.Logger, nss, rest []manifest.Res
 		args = append(args, ns.Name)
 	}
 	args = append(args, "--ignore-not-found", "-o", "name")
-	out, _, err := kubectl(ctx, nil, args...)
+	out, _, err := a.kubectl(ctx, nil, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -134,17 +136,25 @@ func skipPending(ctx context.Context, log *slog.Logger, nss, rest []manifest.Res
 
 func join(rs []manifest.Resource) []byte {
 	var b bytes.Buffer
-	for _, r := range rs {
-		b.WriteString("---\n")
-		b.Write(r.Raw)
+	for _, namespacesPass := range []bool{true, false} {
+		for _, r := range rs {
+			if (r.Kind == "Namespace") == namespacesPass {
+				b.WriteString("---\n")
+				b.Write(r.Raw)
+			}
+		}
 	}
 	return b.Bytes()
 }
 
 // kubectl returns stdout, the exit code, and an error for any non-zero exit.
 // Callers check the code first, because diff's exit 1 is normal.
-func kubectl(ctx context.Context, stdin []byte, args ...string) (string, int, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", args...)
+func (a Applier) kubectl(ctx context.Context, stdin []byte, args ...string) (string, int, error) {
+	bin := a.Kubectl
+	if bin == "" {
+		bin = "kubectl"
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

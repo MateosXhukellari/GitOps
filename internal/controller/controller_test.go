@@ -72,7 +72,7 @@ func setup(t *testing.T) (src string, firstRev string, c *Controller, app *fakeA
 	return src, firstRev, c, app
 }
 
-func TestReconcileAppliesOnlyOnNewCommit(t *testing.T) {
+func TestReconcileAppliesEveryCycle(t *testing.T) {
 	src, rev1, c, app := setup(t)
 	ctx := context.Background()
 
@@ -85,10 +85,11 @@ func TestReconcileAppliesOnlyOnNewCommit(t *testing.T) {
 		t.Fatalf("got rev=%s resources=%d, want rev=%s resources=1", st.AppliedRev, st.Resources, rev1)
 	}
 
-	// Same commit: must not apply again.
+	// Same commit: the Applier is still called every cycle, because it is
+	// what diffs against the live cluster and catches drift.
 	c.Reconcile(ctx)
-	if len(app.calls) != 1 {
-		t.Fatalf("applied %d times on unchanged commit, want 1", len(app.calls))
+	if len(app.calls) != 2 || app.calls[1] != rev1 {
+		t.Fatalf("calls=%v, want the same revision applied twice", app.calls)
 	}
 
 	// New commit: must apply the new revision.
@@ -96,8 +97,8 @@ func TestReconcileAppliesOnlyOnNewCommit(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  namespace: demo\n")
 	c.Reconcile(ctx)
 	st = c.Status()
-	if len(app.calls) != 2 || app.calls[1] != rev2 {
-		t.Fatalf("calls=%v, want second apply of %s", app.calls, rev2)
+	if len(app.calls) != 3 || app.calls[2] != rev2 {
+		t.Fatalf("calls=%v, want third apply of %s", app.calls, rev2)
 	}
 	if st.AppliedRev != rev2 || st.Resources != 2 || st.ReconcileRuns != 3 {
 		t.Fatalf("status = %+v", st)

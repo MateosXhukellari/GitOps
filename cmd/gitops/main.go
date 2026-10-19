@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -28,6 +29,12 @@ func main() {
 	addr := flag.String("listen", ":8080", "HTTP listen address")
 	dryRun := flag.Bool("dry-run", true, "log diffs but never apply (set -dry-run=false to go live)")
 	namespaces := flag.String("namespaces", "", "comma-separated namespaces gitops may manage (required)")
+	// GITOPS_KUBECTL only sets the default, so an explicit -kubectl still wins.
+	defKubectl := os.Getenv("GITOPS_KUBECTL")
+	if defKubectl == "" {
+		defKubectl = "kubectl"
+	}
+	kubectlBin := flag.String("kubectl", defKubectl, "kubectl binary: a name looked up in PATH, or a full path (env GITOPS_KUBECTL)")
 	flag.Parse() // flags are pointer, so read them without *repourl
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -46,10 +53,18 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Resolve kubectl once, so a bad PATH fails at startup, not every cycle.
+	kubectlPath, err := exec.LookPath(*kubectlBin)
+	if err != nil {
+		log.Error("kubectl not found; set -kubectl or GITOPS_KUBECTL to its full path", "kubectl", *kubectlBin, "err", err)
+		os.Exit(2)
+	}
+	log.Info("using kubectl", "path", kubectlPath)
+
 	ctrl := controller.New(
 		git.Repo{URL: *repoURL, Branch: *branch, Dir: *workdir},
 		*path, *interval,
-		kube.Applier{Policy: pol, DryRun: *dryRun, Log: log}, log,
+		kube.Applier{Policy: pol, DryRun: *dryRun, Log: log, Kubectl: kubectlPath}, log,
 	)
 
 	// ctx is cancelled when you press ctrl + c or kuberetes sends sigterm

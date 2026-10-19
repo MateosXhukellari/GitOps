@@ -146,10 +146,10 @@ func TestApplyNamespacesFirstServerSide(t *testing.T) {
 
 	got := calls(t, dir)
 	want := []string{
-		"diff --server-side -f -",
-		"apply --server-side --field-manager=gitops -f -",
-		"diff --server-side -f -",
-		"apply --server-side --field-manager=gitops -f -",
+		"diff --server-side --force-conflicts --field-manager=gitops -f -",
+		"apply --server-side --force-conflicts --field-manager=gitops -f -",
+		"diff --server-side --force-conflicts --field-manager=gitops -f -",
+		"apply --server-side --force-conflicts --field-manager=gitops -f -",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("calls = %q, want %q", got, want)
@@ -242,5 +242,27 @@ func TestKubectlMissing(t *testing.T) {
 	err := applier(false).Apply(context.Background(), "abc123", resources(t))
 	if err == nil || !strings.Contains(err.Error(), "kubectl diff") {
 		t.Fatalf("err = %v, want kubectl not found error", err)
+	}
+}
+
+func TestJoinPutsNamespacesFirst(t *testing.T) {
+	cm := manifest.Resource{Kind: "ConfigMap", Raw: []byte("kind: ConfigMap\n")}
+	ns := manifest.Resource{Kind: "Namespace", Raw: []byte("kind: Namespace\n")}
+	got := string(join([]manifest.Resource{cm, ns}))
+	if strings.Index(got, "kind: Namespace") > strings.Index(got, "kind: ConfigMap") {
+		t.Fatalf("Namespace must come before ConfigMap: \n%s", got)
+	}
+}
+
+func TestCustomKubectlPath(t *testing.T) {
+	dir := setupKubectl(t, "0", "0")
+	t.Setenv("PATH", t.TempDir()) // fake is no longer on PATH, only reachable by full path
+	a := applier(false)
+	a.Kubectl = filepath.Join(dir, "kubectl")
+	if err := a.Apply(context.Background(), "abc123", resources(t)); err != nil {
+		t.Fatal(err)
+	}
+	if c := calls(t, dir); len(c) == 0 || !strings.HasPrefix(c[0], "diff") {
+		t.Fatalf("calls = %q, want the custom kubectl to run diff", c)
 	}
 }
