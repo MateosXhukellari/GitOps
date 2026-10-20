@@ -17,6 +17,7 @@ import (
 	"github.com/rta/gitops/internal/git"
 	"github.com/rta/gitops/internal/kube"
 	"github.com/rta/gitops/internal/policy"
+	"github.com/rta/gitops/internal/prune"
 	"github.com/rta/gitops/internal/server"
 )
 
@@ -47,10 +48,24 @@ func main() {
 	log.Info("using kubectl", "path", kubectlPath)
 	log.Info("configuration", "cfg", cfg) // safe: Config redacts its own secrets
 
+	var applier controller.Applier = kube.Applier{Policy: pol, DryRun: cfg.DryRun, Log: log, Kubectl: kubectlPath}
+
+	if cfg.Prune {
+		applier = prune.Pruner{
+			Next:       applier,
+			Kubectl:    kubectlPath,
+			Owner:      cfg.Owner,
+			Kinds:      cfg.PruneKinds,
+			Namespaces: cfg.Namespaces,
+			DryRun:     cfg.DryRun,
+			MaxDeletes: cfg.PruneMax,
+			Log:        log,
+		}
+	}
 	ctrl := controller.New(
 		git.Repo{URL: cfg.RepoURL, Branch: cfg.Branch, Dir: cfg.Workdir, Token: cfg.GitToken},
 		cfg.Path, cfg.Interval,
-		kube.Applier{Policy: pol, DryRun: cfg.DryRun, Log: log, Kubectl: kubectlPath}, log,
+		applier, log,
 	)
 
 	// ctx is cancelled on Ctrl+C or when Kubernetes sends SIGTERM.

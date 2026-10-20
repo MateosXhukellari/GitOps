@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gitops
-          image: mateosxh/gitops:sha-9efbad5
+          image: mateosxh/gitops:sha-c4d59da
           imagePullPolicy: IfNotPresent
           env:
             - { name: GITOPS_REPO, value: "https://github.com/MateosXhukellari/DemoKubernetes.git" }
@@ -33,9 +33,10 @@ spec:
             - { name: GITOPS_INTERVAL, value: "30s" }
             - { name: GITOPS_LISTEN, value: ":8080" }
             - { name: GITOPS_WORKDIR, value: "/tmp/checkout" }
-            - { name: GITOPS_DRY_RUN, value: "true" }   # flip to "false" to go live
+            - { name: GITOPS_DRY_RUN, value: "false" }   # flip to "false" to go live
             - { name: GITOPS_WEBHOOK_SECRET_FILE, value: "/etc/gitops/webhook/secret" }
             - { name: GITOPS_GIT_TOKEN_FILE, value: "/etc/gitops/git/token" }
+            - { name: GITOPS_PRUNE, value: "true"}
           ports:
             - containerPort: 8080
           readinessProbe:

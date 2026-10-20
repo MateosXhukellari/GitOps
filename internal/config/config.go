@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+var labelValue = regexp.MustCompile(`^[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$`)
 
 type Config struct {
 	RepoURL      string
@@ -22,6 +25,11 @@ type Config struct {
 	Namespaces   []string
 	AllowSecrets bool
 	Kubectl      string
+
+	Prune      bool
+	PruneKinds []string // which kinds may be pruned, e.g. deployments.apps
+	PruneMax   int      // refuse to delete more than this many objects per cycle
+	Owner      string   // label value marking objects this instance manages
 
 	WebhookSecret string
 	GitToken      string
@@ -37,6 +45,10 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("dry_run", c.DryRun),
 		slog.Any("namespaces", c.Namespaces),
 		slog.Bool("allow_plaintext_secrets", c.AllowSecrets),
+		slog.Bool("prune", c.Prune),
+		slog.Any("prune_kinds", c.PruneKinds),
+		slog.Int("prune_max", c.PruneMax),
+		slog.String("owner", c.Owner),
 		slog.Bool("webhook_secret_set", c.WebhookSecret != ""),
 		slog.Bool("git_token_set", c.GitToken != ""),
 	)
@@ -64,6 +76,15 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 		return Config{}, err
 	}
 
+	defPrune, err := envBool(getenv, "GITOPS_PRUNE", false)
+	if err != nil {
+		return Config{}, err
+	}
+	defPruneMax, err := envInt(getenv, "GITOPS_PRUNE_MAX", 10)
+	if err != nil {
+		return Config{}, err
+	}
+
 	fs := flag.NewFlagSet("gitops", flag.ContinueOnError)
 	fs.StringVar(&c.RepoURL, "repo", env("GITOPS_REPO", ""), "git repository URL (env GITOPS_REPO)")
 	fs.StringVar(&c.Branch, "branch", env("GITOPS_BRANCH", "main"), "branch to track (env GITOPS_BRANCH)")
@@ -75,15 +96,19 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 	namespaces := fs.String("namespaces", env("GITOPS_NAMESPACES", ""), "comma-separated namespaces gitops may manage (env GITOPS_NAMESPACES)")
 	fs.BoolVar(&c.AllowSecrets, "allow-plaintext-secrets", defAllow, "permit kind: Secret manifests (env GITOPS_ALLOW_PLAINTEXT_SECRETS)")
 	fs.StringVar(&c.Kubectl, "kubectl", env("GITOPS_KUBECTL", "kubectl"), "kubectl binary: a name in PATH or a full path (env GITOPS_KUBECTL)")
+	fs.BoolVar(&c.Prune, "prune", defPrune, "delete objects removed from git; only ones this tool labelled (env GITOPS_PRUNE)")
+	pruneKinds := fs.String("prune-kinds", env("GITOPS_PRUNE_KINDS", "deployments.apps,services,configmaps"), "comma-separated kinds that may be pruned (env GITOPS_PRUNE_KINDS)")
+	fs.IntVar(&c.PruneMax, "prune-max", defPruneMax, "refuse to delete more than this many objects in one cycle (env GITOPS_PRUNE_MAX)")
+	fs.StringVar(&c.Owner, "owner", env("GITOPS_OWNER", "gitops"), "label value marking objects this instance manages; use a different one per instance (env GITOPS_OWNER)")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
-
 	if fs.NArg() > 0 {
 		return Config{}, fmt.Errorf("config: unexpected argument %q (did you forget a leading dash?)", fs.Arg(0))
 	}
 	c.Namespaces = splitList(*namespaces)
+	c.PruneKinds = splitList(*pruneKinds)
 
 	c.WebhookSecret, err = secret(getenv, readFile, "GITOPS_WEBHOOK_SECRET")
 	if err != nil {
@@ -112,10 +137,17 @@ func (c Config) validate() error {
 	if c.Interval <= 0 {
 		problems = append(problems, "interval must be positive")
 	}
-	// A token that is silently not used would be worse than an error: the
-	// operator would think the repo is authenticated.
 	if c.GitToken != "" && !strings.HasPrefix(c.RepoURL, "https://") {
 		problems = append(problems, "a git token is set but the repo URL is not https://, so it would never be sent")
+	}
+	if !labelValue.MatchString(c.Owner) {
+		problems = append(problems, fmt.Sprintf("owner %q is not a valid label value (letters, digits, - _ . ; max 63)", c.Owner))
+	}
+	if c.Prune && len(c.PruneKinds) == 0 {
+		problems = append(problems, "prune is on but prune-kinds is empty")
+	}
+	if c.PruneMax <= 0 {
+		problems = append(problems, "prune-max must be positive")
 	}
 	if len(problems) > 0 {
 		return errors.New("config: " + strings.Join(problems, "; "))
@@ -133,7 +165,7 @@ func secret(getenv func(string) string, readFile func(string) ([]byte, error), n
 		if err != nil {
 			return "", fmt.Errorf("config: reading %s_FILE: %w", name, err)
 		}
-		return strings.TrimRight(string(b), "\r\n"), nil // editors add a trailing newline
+		return strings.TrimRight(string(b), "\r\n"), nil
 	}
 	return val, nil
 }
@@ -148,6 +180,18 @@ func envBool(getenv func(string) string, key string, def bool) (bool, error) {
 		return false, fmt.Errorf("config: %s=%q is not a boolean", key, v)
 	}
 	return b, nil
+}
+
+func envInt(getenv func(string) string, key string, def int) (int, error) {
+	v := getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s=%q is not a whole number", key, v)
+	}
+	return n, nil
 }
 
 func envDuration(getenv func(string) string, key string, def time.Duration) (time.Duration, error) {
