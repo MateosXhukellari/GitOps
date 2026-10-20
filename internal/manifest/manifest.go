@@ -81,14 +81,15 @@ func Load(root, path string) ([]Resource, error) {
 // parse splits multi-doc yaml stream into resources
 func Parse(data []byte) ([]Resource, error) {
 	var out []Resource
-	for _, doc := range splitDocs(data) {
-		r, ok := identify(doc)
-
-		if !ok {
+	for i, doc := range splitDocs(data) {
+		r, hasContent := identify(doc)
+		if !hasContent {
 			continue
 		}
-		if r.Name == "" {
-			return nil, fmt.Errorf("%s is missing metadata.name", r.Kind)
+		// never drop a non-empty document silently: it would vanish from desired state
+		if r.APIVersion == "" || r.Kind == "" || r.Name == "" {
+			return nil, fmt.Errorf("document %d: cannot identify resource (apiVersion=%q kind=%q metadata.name=%q)",
+				i+1, r.APIVersion, r.Kind, r.Name)
 		}
 		r.Raw = doc
 		out = append(out, r)
@@ -123,10 +124,11 @@ func splitDocs(data []byte) [][]byte {
 	return docs
 }
 
-func identify(doc []byte) (Resource, bool) {
-	var r Resource
+// identify reads apiVersion, kind and metadata name/namespace; hasContent is false for blank or comment-only docs
+func identify(doc []byte) (r Resource, hasContent bool) {
 	inMetadata := false
 	metaIndent := -1
+	baseIndent := -1
 
 	sc := bufio.NewScanner(bytes.NewReader(doc))
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -135,14 +137,19 @@ func identify(doc []byte) (Resource, bool) {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
+		hasContent = true
 		indent := len(line) - len(strings.TrimLeft(line, " "))
+		// top level is wherever the first line sits; a uniformly indented doc is still valid yaml
+		if baseIndent == -1 {
+			baseIndent = indent
+		}
 		key, val, ok := splitKv(strings.TrimSpace(line))
 
 		if !ok {
 			continue
 		}
 
-		if indent == 0 {
+		if indent <= baseIndent {
 			inMetadata = false
 			metaIndent = -1
 			switch key {
@@ -170,7 +177,7 @@ func identify(doc []byte) (Resource, bool) {
 			}
 		}
 	}
-	return r, r.Kind != ""
+	return r, hasContent
 }
 
 // this func turns 'key': "value" # comment` intp key and value
