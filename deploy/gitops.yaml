@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gitops
-          image: mateosxh/gitops:sha-c4d59da
+          image: mateosxh/gitops:sha-5d3d747
           imagePullPolicy: IfNotPresent
           env:
             - { name: GITOPS_REPO, value: "https://github.com/MateosXhukellari/DemoKubernetes.git" }
