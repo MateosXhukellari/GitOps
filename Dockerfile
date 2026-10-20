@@ -6,10 +6,11 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gitops ./cmd/gitop
 
 FROM alpine:3.20 AS kubectl
 ARG KUBECTL_VERSION=v1.35.9
-ARG TARGETARCH=arm64
+ARG TARGETARCH
 RUN apk add --no-cache curl \
-&& curl -fsSL -o /kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
-&& chmod +x /kubectl
+&& curl -fsSL -o /kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH:?}/kubectl" \
+&& chmod +x /kubectl \
+&& /kubectl version --client
 
 FROM alpine:3.20
 RUN apk add --no-cache git ca-certificates \
