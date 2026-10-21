@@ -11,6 +11,7 @@ import (
 	"github.com/rta/gitops/internal/controller"
 	"github.com/rta/gitops/internal/kube"
 	"github.com/rta/gitops/internal/manifest"
+	"github.com/rta/gitops/internal/report"
 )
 
 // Compile-time checks that the pieces fit together as wired in main.go:
@@ -176,5 +177,48 @@ func TestRefusesToDeleteTooMany(t *testing.T) {
 		if strings.HasPrefix(c, "delete") {
 			t.Fatalf("nothing may be deleted over the limit, got %q", c)
 		}
+	}
+}
+
+func TestOutcomeMarks(t *testing.T) {
+	bin, _, _ := fakeKubectl(t, liveWebAndOld, false)
+	ctx, out := report.With(context.Background())
+	if err := pruner(bin, &fakeNext{}).Apply(ctx, "abc", []manifest.Resource{res("Deployment", "web")}); err != nil {
+		t.Fatal(err)
+	}
+	if out.Pruned() != 1 || out.Pending() {
+		t.Fatalf("live: pruned=%d pending=%v, want 1 false", out.Pruned(), out.Pending())
+	}
+
+	p := pruner(bin, &fakeNext{})
+	p.DryRun = true
+	ctx, out = report.With(context.Background())
+	if err := p.Apply(ctx, "abc", []manifest.Resource{res("Deployment", "web")}); err != nil {
+		t.Fatal(err)
+	}
+	if out.Pruned() != 0 || !out.Pending() {
+		t.Fatalf("dry-run: pruned=%d pending=%v, want 0 true", out.Pruned(), out.Pending())
+	}
+}
+
+func TestPruneErrorsAreErrPrune(t *testing.T) {
+	bin, _, _ := fakeKubectl(t, liveWebAndOld, true) // listing fails
+	err := pruner(bin, &fakeNext{}).Apply(context.Background(), "abc", []manifest.Resource{res("Deployment", "web")})
+	if !errors.Is(err, report.ErrPrune) {
+		t.Fatalf("listing failure: err = %v, want report.ErrPrune", err)
+	}
+
+	okBin, _, _ := fakeKubectl(t, liveWebAndOld, false)
+	p := pruner(okBin, &fakeNext{})
+	p.MaxDeletes = 1
+	err = p.Apply(context.Background(), "abc", []manifest.Resource{res("Service", "other")})
+	if !errors.Is(err, report.ErrPrune) || !strings.Contains(err.Error(), "refusing") {
+		t.Fatalf("over the limit: err = %v, want report.ErrPrune", err)
+	}
+
+	// An apply failure passed through from Next must keep its own kind.
+	err = pruner(bin, &fakeNext{err: errors.New("kubectl apply: exit 1")}).Apply(context.Background(), "abc", nil)
+	if err == nil || errors.Is(err, report.ErrPrune) {
+		t.Fatalf("apply failure: err = %v, must not be report.ErrPrune", err)
 	}
 }

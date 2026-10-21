@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/rta/gitops/internal/manifest"
 	"github.com/rta/gitops/internal/policy"
+	"github.com/rta/gitops/internal/report"
 )
 
 // fakeKubectl is a shell script standing in for kubectl. It logs each call's
@@ -264,5 +266,38 @@ func TestCustomKubectlPath(t *testing.T) {
 	}
 	if c := calls(t, dir); len(c) == 0 || !strings.HasPrefix(c[0], "diff") {
 		t.Fatalf("calls = %q, want the custom kubectl to run diff", c)
+	}
+}
+
+func TestApplyReportsOutcome(t *testing.T) {
+	for _, tt := range []struct {
+		name                 string
+		dryRun               bool
+		diffExit             string
+		wantApplied, wantPen bool
+	}{
+		{"applied", false, "1", true, false},
+		{"dry-run pending", true, "1", false, true},
+		{"no diff", false, "0", false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setupKubectl(t, tt.diffExit, "0")
+			t.Setenv("FAKE_EXISTING_NS", "demo")
+			ctx, out := report.With(context.Background())
+			if err := applier(tt.dryRun).Apply(ctx, "abc123", resources(t)); err != nil {
+				t.Fatal(err)
+			}
+			if out.Applied() != tt.wantApplied || out.Pending() != tt.wantPen {
+				t.Fatalf("applied=%v pending=%v, want %v %v", out.Applied(), out.Pending(), tt.wantApplied, tt.wantPen)
+			}
+		})
+	}
+}
+
+func TestPolicyRejectionIsErrPolicy(t *testing.T) {
+	setupKubectl(t, "1", "0")
+	rs := []manifest.Resource{{Kind: "ConfigMap", Namespace: "kube-system", Name: "evil", File: "evil.yaml"}}
+	if err := applier(false).Apply(context.Background(), "abc123", rs); !errors.Is(err, report.ErrPolicy) {
+		t.Fatalf("err = %v, want report.ErrPolicy", err)
 	}
 }
