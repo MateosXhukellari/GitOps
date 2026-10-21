@@ -191,10 +191,12 @@ Please read these before pointing it at anything important.
 - **Secrets are not supported in git.** Plaintext Secrets are rejected on
   purpose. Create them out of band, or use an encrypted-secret tool in the
   cluster (Sealed Secrets, SOPS) once it is supported here.
-- **Hand-written YAML scanner.** It reads only identity fields
-  (`apiVersion`, `kind`, `metadata.name`, `metadata.namespace`). An
-  unidentifiable document is an error, never a silent skip, but a real YAML
-  parser is planned.
+- **Identity fields only.** Each document is parsed with a real YAML parser
+  (`gopkg.in/yaml.v3`), but only `apiVersion`, `kind`, `metadata.name` and
+  `metadata.namespace` are read; the document is sent to kubectl exactly as
+  written. A document that cannot be identified (invalid YAML, not a mapping,
+  missing fields, content on a `---` line) is an error naming the file and
+  document number, never a silent skip.
 - **Single cluster, single repo path per instance.** Run several instances,
   each with its own `-owner`, for several sources.
 - **No health assessment** (it does not wait for a Deployment to become
@@ -209,7 +211,7 @@ go vet ./... && gofmt -l .
 ```
 
 Requirements: Go 1.24+, `git`, and `kubectl` on the PATH for a local run. The
-module uses only the standard library.
+only dependency outside the standard library is `gopkg.in/yaml.v3`.
 
 Run locally against your current kube context (dry-run by default):
 

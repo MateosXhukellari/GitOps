@@ -1,14 +1,17 @@
 package manifest
 
 import (
-	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Resource struct {
@@ -78,27 +81,30 @@ func Load(root, path string) ([]Resource, error) {
 	return out, nil
 }
 
-// parse splits multi-doc yaml stream into resources
+// Parse splits a multi-document YAML stream into resources.
 func Parse(data []byte) ([]Resource, error) {
+	docs, err := splitDocs(data)
+	if err != nil {
+		return nil, err
+	}
 	var out []Resource
-	for i, doc := range splitDocs(data) {
-		r, hasContent := identify(doc)
+	for i, doc := range docs {
+		r, hasContent, err := identify(doc)
+		if err != nil {
+			// never drop a non-empty document silently: it would vanish from desired state
+			return nil, fmt.Errorf("document %d: %w", i+1, err)
+		}
 		if !hasContent {
 			continue
-		}
-		// never drop a non-empty document silently: it would vanish from desired state
-		if r.APIVersion == "" || r.Kind == "" || r.Name == "" {
-			return nil, fmt.Errorf("document %d: cannot identify resource (apiVersion=%q kind=%q metadata.name=%q)",
-				i+1, r.APIVersion, r.Kind, r.Name)
 		}
 		r.Raw = doc
 		out = append(out, r)
 	}
-
 	return out, nil
 }
 
-func splitDocs(data []byte) [][]byte {
+// splitDocs splits on "---" lines itself so each Raw is the document exactly as written.
+func splitDocs(data []byte) ([][]byte, error) {
 	var docs [][]byte
 	var cur bytes.Buffer
 	flush := func() {
@@ -108,98 +114,63 @@ func splitDocs(data []byte) [][]byte {
 		}
 	}
 
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		trimmed := strings.TrimRight(line, " \t\r")
+	for i, line := range strings.SplitAfter(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		trimmed := strings.TrimRight(line, " \t\r\n")
 		if trimmed == "---" || strings.HasPrefix(trimmed, "--- ") {
+			// content on the marker line would otherwise be dropped silently
+			if rest := strings.TrimSpace(trimmed[3:]); rest != "" && !strings.HasPrefix(rest, "#") {
+				return nil, fmt.Errorf("line %d: content after \"---\" on the same line is not supported", i+1)
+			}
 			flush()
 			continue
 		}
 		cur.WriteString(line)
-		cur.WriteByte('\n')
+		if !strings.HasSuffix(line, "\n") {
+			cur.WriteByte('\n') // join() needs every doc to end in a newline
+		}
 	}
 	flush()
-	return docs
+	return docs, nil
 }
 
-// identify reads apiVersion, kind and metadata name/namespace; hasContent is false for blank or comment-only docs
-func identify(doc []byte) (r Resource, hasContent bool) {
-	inMetadata := false
-	metaIndent := -1
-	baseIndent := -1
-
-	sc := bufio.NewScanner(bytes.NewReader(doc))
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		hasContent = true
-		indent := len(line) - len(strings.TrimLeft(line, " "))
-		// top level is wherever the first line sits; a uniformly indented doc is still valid yaml
-		if baseIndent == -1 {
-			baseIndent = indent
-		}
-		key, val, ok := splitKv(strings.TrimSpace(line))
-
-		if !ok {
-			continue
-		}
-
-		if indent <= baseIndent {
-			inMetadata = false
-			metaIndent = -1
-			switch key {
-			case "apiVersion":
-				r.APIVersion = val
-			case "kind":
-				r.Kind = val
-			case "metadata":
-				inMetadata = true
-			}
-			continue
-		}
-
-		if inMetadata {
-			if metaIndent == -1 {
-				metaIndent = indent
-			}
-			if indent == metaIndent {
-				switch key {
-				case "name":
-					r.Name = val
-				case "namespace":
-					r.Namespace = val
-				}
-			}
-		}
+// identify reads apiVersion, kind and metadata name/namespace; hasContent is false for blank or comment-only docs.
+func identify(doc []byte) (r Resource, hasContent bool, err error) {
+	dec := yaml.NewDecoder(bytes.NewReader(doc))
+	var n yaml.Node
+	if err := dec.Decode(&n); err == io.EOF {
+		return r, false, nil
+	} else if err != nil {
+		return r, true, fmt.Errorf("invalid YAML: %w", err)
 	}
-	return r, hasContent
-}
-
-// this func turns 'key': "value" # comment` intp key and value
-func splitKv(s string) (key, val string, ok bool) {
-	i := strings.Index(s, ":")
-	if i <= 0 {
-		return "", "", false
+	if len(n.Content) == 0 {
+		return r, false, nil
 	}
-	key = strings.TrimSpace(s[:i])
-	val = strings.TrimSpace(s[i+1:])
-	if strings.HasPrefix(key, "- ") || strings.ContainsAny(key, " \t\"'") {
-		return "", "", false
+	// a "..." end marker followed by more content would hide a second document
+	if err := dec.Decode(new(yaml.Node)); err != io.EOF {
+		return r, true, errors.New("more than one YAML document; separate documents with \"---\"")
+	}
+	if n.Content[0].Kind != yaml.MappingNode {
+		return r, true, errors.New("not a YAML mapping")
 	}
 
-	if len(val) > 0 && (val[0] == '"' || val[0] == '\'') {
-		q := val[0]
-		if end := strings.IndexByte(val[1:], q); end >= 0 {
-			return key, val[1 : 1+end], true
-		}
+	var v struct {
+		APIVersion string `yaml:"apiVersion"`
+		Kind       string `yaml:"kind"`
+		Metadata   struct {
+			Name      string `yaml:"name"`
+			Namespace string `yaml:"namespace"`
+		} `yaml:"metadata"`
 	}
-	if c := strings.Index(val, " #"); c >= 0 {
-		val = strings.TrimSpace(val[:c])
+	if err := n.Decode(&v); err != nil {
+		return r, true, fmt.Errorf("cannot read identity fields: %w", err)
 	}
-	return key, val, true
+	r = Resource{APIVersion: v.APIVersion, Kind: v.Kind, Name: v.Metadata.Name, Namespace: v.Metadata.Namespace}
+	if r.APIVersion == "" || r.Kind == "" || r.Name == "" {
+		return r, true, fmt.Errorf("cannot identify resource (apiVersion=%q kind=%q metadata.name=%q)",
+			r.APIVersion, r.Kind, r.Name)
+	}
+	return r, true, nil
 }
