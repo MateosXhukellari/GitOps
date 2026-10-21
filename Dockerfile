@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 FROM golang:1.24-alpine AS build
 WORKDIR /src
+# Modules first, so this layer stays cached until go.mod or go.sum change.
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gitops ./cmd/gitops
 
