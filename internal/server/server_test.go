@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rta/gitops/internal/controller"
 	"github.com/rta/gitops/internal/git"
@@ -109,6 +110,51 @@ func TestMethodNotAllowed(t *testing.T) {
 	} {
 		if rec := do(h, tc.method, tc.path, "", nil); rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s %s: got %d, want 405", tc.method, tc.path, rec.Code)
+		}
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	rec := do(newServer(""), "GET", "/metrics", "", nil)
+	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; version=0.0.4" {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+	for _, kind := range controller.FailureKinds {
+		line := `gitops_reconcile_failures_total{kind="` + kind + `"} 0` + "\n"
+		if !strings.Contains(rec.Body.String(), line) {
+			t.Errorf("missing zero-filled %q", line)
+		}
+	}
+}
+
+func TestWriteMetricsValues(t *testing.T) {
+	var b strings.Builder
+	writeMetrics(&b, controller.Status{
+		ReconcileRuns: 7, Applies: 3, Pruned: 2, Resources: 5,
+		Sync:        controller.SyncOutOfSync,
+		LastSuccess: time.Unix(1700000000, 0),
+		Failures:    map[string]int{controller.KindPolicy: 4},
+	})
+	for _, line := range []string{
+		"gitops_reconcile_total 7\n",
+		"gitops_applies_total 3\n",
+		"gitops_pruned_total 2\n",
+		"gitops_resources 5\n",
+		"gitops_out_of_sync 1\n",
+		"gitops_last_success_timestamp_seconds 1700000000\n",
+		`gitops_reconcile_failures_total{kind="policy"} 4` + "\n",
+		`gitops_reconcile_failures_total{kind="git"} 0` + "\n",
+	} {
+		if !strings.Contains(b.String(), line) {
+			t.Errorf("missing %q in:\n%s", line, b.String())
+		}
+	}
+
+	b.Reset()
+	writeMetrics(&b, controller.Status{Sync: controller.SyncSynced})
+	for _, line := range []string{"gitops_out_of_sync 0\n", "gitops_last_success_timestamp_seconds 0\n"} {
+		if !strings.Contains(b.String(), line) {
+			t.Errorf("missing %q for a never-succeeded Synced status", line)
 		}
 	}
 }
