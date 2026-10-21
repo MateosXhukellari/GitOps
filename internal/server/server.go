@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/rta/gitops/internal/controller"
+	"github.com/MateosXhukellari/GitOps/internal/controller"
 )
 
 const maxBody = 5 << 20 //5MB

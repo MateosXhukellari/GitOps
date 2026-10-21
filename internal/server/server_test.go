@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rta/gitops/internal/controller"
-	"github.com/rta/gitops/internal/git"
+	"github.com/MateosXhukellari/GitOps/internal/controller"
+	"github.com/MateosXhukellari/GitOps/internal/git"
 )
 
 func sign(secret, body string) string {

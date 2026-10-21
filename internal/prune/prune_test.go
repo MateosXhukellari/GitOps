@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rta/gitops/internal/controller"
-	"github.com/rta/gitops/internal/kube"
-	"github.com/rta/gitops/internal/manifest"
-	"github.com/rta/gitops/internal/report"
+	"github.com/MateosXhukellari/GitOps/internal/controller"
+	"github.com/MateosXhukellari/GitOps/internal/kube"
+	"github.com/MateosXhukellari/GitOps/internal/manifest"
+	"github.com/MateosXhukellari/GitOps/internal/report"
 )
 
 // Compile-time checks that the pieces fit together as wired in main.go:

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rta/gitops/internal/manifest"
+	"github.com/MateosXhukellari/GitOps/internal/manifest"
 )
 
 func res(kind, ns, name string) manifest.Resource {

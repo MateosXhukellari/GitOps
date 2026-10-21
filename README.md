@@ -47,7 +47,7 @@ You need a cluster, `kubectl` access as an admin, and a git repo of manifests.
 **1. Get the deploy files.**
 
 ```bash
-git clone https://github.com/<your-user>/gitops && cd gitops
+git clone https://github.com/MateosXhukellari/GitOps.git && cd GitOps
 ```
 
 **2. Create the permission boundary (once, as a cluster admin).** Edit

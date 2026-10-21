@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rta/gitops/internal/git"
-	"github.com/rta/gitops/internal/manifest"
-	"github.com/rta/gitops/internal/report"
+	"github.com/MateosXhukellari/GitOps/internal/git"
+	"github.com/MateosXhukellari/GitOps/internal/manifest"
+	"github.com/MateosXhukellari/GitOps/internal/report"
 )
 
 // markApplier calls mark on the cycle's context and returns err.

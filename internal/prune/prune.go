@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/rta/gitops/internal/manifest"
-	"github.com/rta/gitops/internal/report"
+	"github.com/MateosXhukellari/GitOps/internal/manifest"
+	"github.com/MateosXhukellari/GitOps/internal/report"
 )
 
 const OwnerLabel = "gitops.rta.io/owner"

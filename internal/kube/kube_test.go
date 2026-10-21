@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rta/gitops/internal/manifest"
-	"github.com/rta/gitops/internal/policy"
-	"github.com/rta/gitops/internal/report"
+	"github.com/MateosXhukellari/GitOps/internal/manifest"
+	"github.com/MateosXhukellari/GitOps/internal/policy"
+	"github.com/MateosXhukellari/GitOps/internal/report"
 )
 
 // fakeKubectl is a shell script standing in for kubectl. It logs each call's

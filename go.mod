@@ -1,4 +1,4 @@
-module github.com/rta/gitops
+module github.com/MateosXhukellari/GitOps
 
 go 1.22.2
 

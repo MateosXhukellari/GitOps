@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rta/gitops/internal/git"
-	"github.com/rta/gitops/internal/manifest"
+	"github.com/MateosXhukellari/GitOps/internal/git"
+	"github.com/MateosXhukellari/GitOps/internal/manifest"
 )
 
 // fakeApplier records every Apply call and can be told to fail.

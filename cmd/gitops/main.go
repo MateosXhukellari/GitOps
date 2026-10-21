@@ -12,13 +12,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rta/gitops/internal/config"
-	"github.com/rta/gitops/internal/controller"
-	"github.com/rta/gitops/internal/git"
-	"github.com/rta/gitops/internal/kube"
-	"github.com/rta/gitops/internal/policy"
-	"github.com/rta/gitops/internal/prune"
-	"github.com/rta/gitops/internal/server"
+	"github.com/MateosXhukellari/GitOps/internal/config"
+	"github.com/MateosXhukellari/GitOps/internal/controller"
+	"github.com/MateosXhukellari/GitOps/internal/git"
+	"github.com/MateosXhukellari/GitOps/internal/kube"
+	"github.com/MateosXhukellari/GitOps/internal/policy"
+	"github.com/MateosXhukellari/GitOps/internal/prune"
+	"github.com/MateosXhukellari/GitOps/internal/server"
 )
 
 func main() {
