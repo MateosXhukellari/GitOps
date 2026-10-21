@@ -25,18 +25,12 @@ spec:
         - name: gitops
           image: mateosxh/gitops:sha-c7f079c
           imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: gitops-config
           env:
-            - { name: GITOPS_REPO, value: "https://github.com/MateosXhukellari/DemoKubernetes.git" }
-            - { name: GITOPS_BRANCH, value: "main" }
-            - { name: GITOPS_PATH, value: "manifests" }
-            - { name: GITOPS_NAMESPACES, value: "demo" }
-            - { name: GITOPS_INTERVAL, value: "30s" }
             - { name: GITOPS_LISTEN, value: ":8080" }
             - { name: GITOPS_WORKDIR, value: "/tmp/checkout" }
-            - { name: GITOPS_DRY_RUN, value: "false" }   # flip to "false" to go live
-            - { name: GITOPS_WEBHOOK_SECRET_FILE, value: "/etc/gitops/webhook/secret" }
-            - { name: GITOPS_GIT_TOKEN_FILE, value: "/etc/gitops/git/token" }
-            - { name: GITOPS_PRUNE, value: "true"}
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -62,6 +56,8 @@ spec:
         - name: webhook
           secret:
             secretName: gitops-webhook
+            optional: true
         - name: git
           secret:
             secretName: gitops-git
+            optional: true

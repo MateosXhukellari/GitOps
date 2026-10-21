@@ -15,3 +15,4 @@
 .vscode/
 .idea/
 .DS_Store
+deploy/*.local.yaml

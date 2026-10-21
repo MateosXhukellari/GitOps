@@ -54,3 +54,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+  release:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bake this release's image tag into the install manifest
+        run: |
+          mkdir -p dist
+          sed "s#image: ${IMAGE}:.*#image: ${IMAGE}:${GITHUB_REF_NAME}#" deploy/gitops.yaml > dist/gitops.yaml
+          grep -q "image: ${IMAGE}:${GITHUB_REF_NAME}\$" dist/gitops.yaml
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/gitops.yaml deploy/config.yaml deploy/bootstrap.yaml --generate-notes
