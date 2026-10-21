@@ -180,8 +180,19 @@ Failures are labelled by kind: `git`, `manifest`, `policy`, `apply` or `prune`.
 
 Metrics: `gitops_reconcile_total`, `gitops_applies_total`, `gitops_pruned_total`,
 `gitops_resources`, `gitops_out_of_sync`, `gitops_last_success_timestamp_seconds`,
-and `gitops_reconcile_failures_total{kind="..."}`. A useful alert is "no
-successful sync for N minutes".
+and `gitops_reconcile_failures_total{kind="..."}`.
+
+### Alerting
+
+Alert on either of these:
+
+```promql
+increase(gitops_reconcile_failures_total[10m]) > 0     # any failed cycle
+time() - gitops_last_success_timestamp_seconds > 300   # no good cycle for 5 minutes
+```
+
+Do not alert on `gitops_out_of_sync` alone: it is only `1` in dry-run (a diff
+was found and left alone), and it stays `0` while cycles are failing.
 
 ## Limits
 
