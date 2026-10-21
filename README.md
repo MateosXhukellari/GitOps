@@ -72,24 +72,55 @@ unset GH_TOKEN
 ```
 
 Do not use a classic `repo`-scope token: it can write to everything you own.
+Then uncomment `GITOPS_GIT_TOKEN_FILE` in `deploy/config.yaml`.
 
-**4. Edit `deploy/gitops.yaml`:**
+**4. Edit the settings in `deploy/config.yaml`** (the `gitops-config` ConfigMap):
 
 - `GITOPS_REPO`, `GITOPS_BRANCH`, `GITOPS_PATH`: where your manifests live.
 - `GITOPS_NAMESPACES`: every namespace it may manage (must match `bootstrap.yaml`).
-- `image:` a pinned tag such as `mateosxh/gitops:sha-<short>`. Prefer a SHA tag
-  to `latest`, so you know exactly what is running.
 - Leave `GITOPS_DRY_RUN: "true"` for now.
 
-**5. Deploy and watch.**
+In `deploy/gitops.yaml`, check that `image:` is a pinned tag such as
+`mateosxh/gitops:v0.1.0` or `sha-<short>`. Prefer a pinned tag to `latest`, so
+you know exactly what is running. Files named `deploy/*.local.yaml` are
+gitignored, for copies holding your own values.
+
+**5. Deploy and watch.** The ConfigMap must exist before the Deployment starts:
 
 ```bash
+kubectl apply -f deploy/config.yaml
 kubectl apply -f deploy/gitops.yaml
 kubectl -n gitops-system logs deploy/gitops -f
 ```
 
 You should see `reconciled ... sync=OutOfSync` plus the diffs it would apply.
-When they look right, set `GITOPS_DRY_RUN: "false"` and apply again.
+When they look right, set `GITOPS_DRY_RUN: "false"` in `deploy/config.yaml`,
+apply it, and restart the controller (it reads its settings only at start):
+
+```bash
+kubectl apply -f deploy/config.yaml
+kubectl -n gitops-system rollout restart deploy/gitops
+```
+
+### Upgrading
+
+Every setting change needs `kubectl apply -f deploy/config.yaml` followed by
+the `rollout restart` above. To change the version, set the new tag on the
+`image:` line of `deploy/gitops.yaml`, then:
+
+```bash
+kubectl apply -f deploy/gitops.yaml
+kubectl -n gitops-system rollout status deploy/gitops
+```
+
+Each GitHub release attaches `gitops.yaml` with its image tag already set, plus
+`config.yaml` and `bootstrap.yaml`.
+
+From a clone of this repo, `scripts/deploy.sh` does the same for the image CI
+built for the current commit: it refuses unless the `sha-<short>` tag exists on
+Docker Hub, sets the `image:` line, applies the file and waits for the rollout.
+`scripts/deploy.sh sha-1a2b3c4` deploys (or rolls back to) a specific tag.
+Commit `deploy/gitops.yaml` afterwards so git records what is running.
 
 ### Requirements for the cluster
 
@@ -287,7 +318,8 @@ internal/prune       guarded deletion of objects removed from git
 internal/controller  the reconcile loop and status
 internal/server      /healthz, /status, /metrics, /webhook
 internal/report      typed failures and per-cycle outcome
-deploy/              bootstrap.yaml (RBAC) and gitops.yaml (the Deployment)
+deploy/              bootstrap.yaml (RBAC), config.yaml (settings), gitops.yaml (the Deployment)
+scripts/deploy.sh    deploy the CI-built image for the current commit
 ```
 
 ## License

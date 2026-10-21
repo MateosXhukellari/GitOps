@@ -4,7 +4,7 @@ metadata:
   name: gitops
   namespace: gitops-system
 spec:
-  replicas: 1          
+  replicas: 1
   strategy:
     type: Recreate
   selector:

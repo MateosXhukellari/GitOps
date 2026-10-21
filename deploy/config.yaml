@@ -4,8 +4,8 @@ metadata:
   name: gitops-config
   namespace: gitops-system
 data:
-  # The public demo repo. Replace it with your own manifest repository.
-  GITOPS_REPO: "https://github.com/MateosXhukellari/DemoKubernetes.git"
+  # Your manifest repository (https; see the README for private repos).
+  GITOPS_REPO: "https://github.com/<you>/<manifests>.git"
   GITOPS_BRANCH: "main"
   GITOPS_PATH: "manifests"
   GITOPS_NAMESPACES: "demo"
