@@ -11,6 +11,7 @@ import (
 
 	"github.com/rta/gitops/internal/manifest"
 	"github.com/rta/gitops/internal/policy"
+	"github.com/rta/gitops/internal/report"
 )
 
 type Applier struct {
@@ -67,12 +68,13 @@ func (a Applier) diffApply(ctx context.Context, log *slog.Logger, revision strin
 		return err
 	}
 	if code != 1 {
-		log.Info("cluster already matches git", "revision", revision, "resources", len(rs))
+		log.Debug("cluster already matches git", "revision", revision, "resources", len(rs))
 		return nil
 	}
 	log.Info("cluster differs from git", "revision", revision, "diff", out)
 
 	if a.DryRun {
+		report.MarkPending(ctx)
 		log.Info("dry-run: not applying", "revision", revision)
 		return nil
 	}
@@ -80,6 +82,7 @@ func (a Applier) diffApply(ctx context.Context, log *slog.Logger, revision strin
 	if _, _, err := a.kubectl(ctx, stream, "apply", "--server-side", "--force-conflicts", "--field-manager=gitops", "-f", "-"); err != nil {
 		return err
 	}
+	report.MarkApplied(ctx)
 	log.Info("applied", "revision", revision, "resources", len(rs))
 	return nil
 }

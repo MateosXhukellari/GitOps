@@ -2,16 +2,42 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/rta/gitops/internal/git"
 	"github.com/rta/gitops/internal/manifest"
+	"github.com/rta/gitops/internal/report"
 )
 
 type Applier interface {
 	Apply(ctx context.Context, revision string, desired []manifest.Resource) error
+}
+
+const (
+	KindGit      = "git"
+	KindManifest = "manifest"
+	KindPolicy   = "policy"
+	KindApply    = "apply"
+	KindPrune    = "prune"
+)
+
+var FailureKinds = []string{KindGit, KindManifest, KindPolicy, KindApply, KindPrune}
+
+const (
+	SyncUnknown   = "Unknown"
+	SyncSynced    = "Synced"
+	SyncOutOfSync = "OutOfSync"
+)
+
+var failureMessages = map[string]string{
+	KindGit:      "git sync failed",
+	KindManifest: "load manifests failed",
+	KindPolicy:   "policy rejected the revision",
+	KindApply:    "apply failed",
+	KindPrune:    "prune failed",
 }
 
 type Status struct {
@@ -22,6 +48,12 @@ type Status struct {
 	LastError     string    `json:"lastError,omitempty"`
 	AppliedRev    string    `json:"appliedRevision"`
 	ReconcileRuns int       `json:"reconcileRuns"`
+
+	Sync          string         `json:"sync"`                    // Synced, OutOfSync or Unknown
+	LastErrorKind string         `json:"lastErrorKind,omitempty"` // one of FailureKinds
+	Failures      map[string]int `json:"failures"`                // total failed cycles by kind
+	Applies       int            `json:"applies"`                 // cycles that changed the cluster
+	Pruned        int            `json:"pruned"`
 }
 
 type Controller struct {
@@ -46,6 +78,7 @@ func New(repo git.Repo, path string, interval time.Duration, applier Applier, lo
 	return &Controller{
 		Repo: repo, Path: path, Interval: interval, Applier: applier, Log: log,
 		trigger: make(chan struct{}, 1),
+		status:  Status{Sync: SyncUnknown, Failures: map[string]int{}},
 	}
 }
 
@@ -60,7 +93,12 @@ func (c *Controller) Trigger() {
 func (c *Controller) Status() Status {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.status // returns a copy
+	st := c.status
+	st.Failures = make(map[string]int, len(c.status.Failures))
+	for k, v := range c.status.Failures {
+		st.Failures[k] = v
+	}
+	return st // returns a copy
 }
 
 func (c *Controller) Run(ctx context.Context) {
@@ -79,6 +117,7 @@ func (c *Controller) Run(ctx context.Context) {
 }
 
 func (c *Controller) Reconcile(ctx context.Context) {
+	start := time.Now()
 	c.mu.Lock()
 	c.status.LastAttempt = time.Now()
 	c.status.ReconcileRuns++
@@ -86,20 +125,26 @@ func (c *Controller) Reconcile(ctx context.Context) {
 
 	rev, err := c.Repo.Sync(ctx)
 	if err != nil {
-		c.fail("git sync failed", err)
+		c.fail(KindGit, err)
 		return
 	}
 	desired, err := manifest.Load(c.Repo.Dir, c.Path)
 	if err != nil {
-		c.fail("load manifests failed", err)
+		c.fail(KindManifest, err)
 		return
 	}
 
 	// only apply when commit changed
 	// last good revision is never overwritten
+	ctx, out := report.With(ctx)
 	if err := c.Applier.Apply(ctx, rev, desired); err != nil {
-		c.fail("apply failed", err)
+		c.fail(kindOf(err), err)
 		return
+	}
+
+	sync := SyncSynced
+	if out.Pending() {
+		sync = SyncOutOfSync
 	}
 
 	c.mu.Lock()
@@ -108,13 +153,46 @@ func (c *Controller) Reconcile(ctx context.Context) {
 	c.status.Resources = len(desired)
 	c.status.LastSuccess = time.Now()
 	c.status.LastError = ""
+	c.status.LastErrorKind = ""
+	c.status.Sync = sync
+	if out.Applied() {
+		c.status.Applies++
+	}
+	c.status.Pruned += out.Pruned()
 	c.mu.Unlock()
+
+	c.Log.Info("reconciled",
+		"revision", shortRev(rev), "resources", len(desired), "sync", sync,
+		"applied", out.Applied(), "pruned", out.Pruned(),
+		"took", time.Since(start).Round(time.Millisecond))
 }
 
-func (c *Controller) fail(msg string, err error) {
-	c.Log.Error(msg, "err", err)
+func kindOf(err error) string {
+	switch {
+	case errors.Is(err, report.ErrPolicy):
+		return KindPolicy
+	case errors.Is(err, report.ErrPrune):
+		return KindPrune
+	default:
+		return KindApply
+	}
+}
+
+func shortRev(rev string) string {
+	if len(rev) > 7 {
+		return rev[:7]
+	}
+	return rev
+}
+
+func (c *Controller) fail(kind string, err error) {
+	msg := failureMessages[kind]
+	c.Log.Error(msg, "kind", kind, "err", err)
 	c.mu.Lock()
 	c.status.LastError = msg + ": " + err.Error()
+	c.status.LastErrorKind = kind
+	c.status.Failures[kind]++
+	c.status.Sync = SyncUnknown
 	c.mu.Unlock()
 }
 

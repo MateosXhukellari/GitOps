@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/rta/gitops/internal/manifest"
+	"github.com/rta/gitops/internal/report"
 )
 
 type Policy struct {
@@ -46,7 +47,7 @@ func (p Policy) Check(rs []manifest.Resource) error {
 	}
 
 	if len(problems) > 0 {
-		return fmt.Errorf("policy: %d violation(s):\n %s", len(problems), strings.Join(problems, "\n "))
+		return fmt.Errorf("%w: %d violation(s):\n %s", report.ErrPolicy, len(problems), strings.Join(problems, "\n "))
 	}
 	return nil
 }

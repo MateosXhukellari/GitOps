@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/rta/gitops/internal/manifest"
+	"github.com/rta/gitops/internal/report"
 )
 
 const OwnerLabel = "gitops.rta.io/owner"
@@ -66,13 +67,13 @@ func (p Pruner) prune(ctx context.Context, revision string, desired []manifest.R
 
 	if !p.DryRun {
 		if _, err := p.run(ctx, join(managed), "label", "--overwrite", "-f", "-", OwnerLabel+"="+p.Owner); err != nil {
-			return fmt.Errorf("prune: labelling: %w", err)
+			return fmt.Errorf("%w: labelling: %w", report.ErrPrune, err)
 		}
 	}
 
 	live, err := p.list(ctx)
 	if err != nil {
-		return fmt.Errorf("prune: listing (nothing was deleted): %w", err)
+		return fmt.Errorf("%w: listing (nothing was deleted): %w", report.ErrPrune, err)
 	}
 	var stale []object
 	for _, o := range live {
@@ -90,19 +91,21 @@ func (p Pruner) prune(ctx context.Context, revision string, desired []manifest.R
 		limit = DefaultMaxDeletes
 	}
 	if len(stale) > limit {
-		return fmt.Errorf("prune: refusing to delete %d objects (limit %d): %s",
+		return fmt.Errorf("%w: refusing to delete %d objects (limit %d): %s", report.ErrPrune,
 			len(stale), limit, names(stale))
 	}
 
 	for _, o := range stale {
 		if p.DryRun {
+			report.MarkPending(ctx)
 			log.Info("dry-run: would prune", "kind", o.Kind, "namespace", o.Namespace, "name", o.Name)
 			continue
 		}
 		args := []string{"delete", strings.ToLower(o.Kind), o.Name, "-n", o.Namespace, "--ignore-not-found", "--wait=false"}
 		if _, err := p.run(ctx, nil, args...); err != nil {
-			return fmt.Errorf("prune: deleting %s: %w", o.key(), err)
+			return fmt.Errorf("%w: deleting %s: %w", report.ErrPrune, o.key(), err)
 		}
+		report.MarkPruned(ctx, 1)
 		log.Info("pruned", "kind", o.Kind, "namespace", o.Namespace, "name", o.Name, "revision", revision)
 	}
 	return nil
