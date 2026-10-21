@@ -249,4 +249,4 @@ deploy/              bootstrap.yaml (RBAC) and gitops.yaml (the Deployment)
 
 ## License
 
-TODO: choose a license before publishing.
+MIT, see [LICENSE](LICENSE).
