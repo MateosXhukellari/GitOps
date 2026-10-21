@@ -32,7 +32,7 @@ func (p Policy) Check(rs []manifest.Resource) error {
 
 	for _, r := range rs {
 		if r.Kind == "Secret" && !p.AllowSecrets {
-			problems = append(problems, fmt.Sprintf("%s: Secret %q must not be stored in git in plaintext", r.File, r.Name))
+			problems = append(problems, fmt.Sprintf("%s: Secret %q must not be stored in git in plaintext; commit a SealedSecret (bitnami.com/v1alpha1) or encrypt it with SOPS", r.File, r.Name))
 		}
 		switch {
 		case r.Kind == "Namespace":

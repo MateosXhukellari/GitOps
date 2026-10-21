@@ -101,3 +101,28 @@ func TestSecretsRejectedByDefault(t *testing.T) {
 		t.Fatalf("expected 2 violations, got %v", err)
 	}
 }
+
+func TestSealedSecretFollowsNamespaceAllowlist(t *testing.T) {
+	p := New([]string{"demo"})
+	ss := func(ns string) manifest.Resource {
+		r := res("SealedSecret", ns, "db")
+		r.APIVersion = "bitnami.com/v1alpha1"
+		return r
+	}
+	if err := p.Check([]manifest.Resource{ss("demo")}); err != nil {
+		t.Fatalf("SealedSecret in an allowed namespace: %v", err)
+	}
+	if err := p.Check([]manifest.Resource{ss("kube-system")}); err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("SealedSecret in another namespace: err = %v", err)
+	}
+	if err := p.Check([]manifest.Resource{ss("")}); err == nil || !strings.Contains(err.Error(), "has no namespace") {
+		t.Fatalf("SealedSecret without a namespace: err = %v", err)
+	}
+}
+
+func TestPlaintextSecretPointsToAlternatives(t *testing.T) {
+	err := New([]string{"demo"}).Check([]manifest.Resource{res("Secret", "demo", "db")})
+	if err == nil || !strings.Contains(err.Error(), "SealedSecret") || !strings.Contains(err.Error(), "SOPS") {
+		t.Fatalf("err = %v, want it to mention SealedSecret and SOPS", err)
+	}
+}

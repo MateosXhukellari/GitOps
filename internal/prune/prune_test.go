@@ -222,3 +222,18 @@ func TestPruneErrorsAreErrPrune(t *testing.T) {
 		t.Fatalf("apply failure: err = %v, must not be report.ErrPrune", err)
 	}
 }
+
+func TestSealedSecretPrunedOnlyWhenListed(t *testing.T) {
+	const live = `{"items":[{"kind":"SealedSecret","metadata":{"name":"db","namespace":"demo"}}]}`
+	bin, log, _ := fakeKubectl(t, live, false)
+	p := pruner(bin, &fakeNext{})
+	p.Kinds = append(p.Kinds, "sealedsecrets.bitnami.com")
+	if err := p.Apply(context.Background(), "abc", []manifest.Resource{res("Deployment", "web")}); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(calls(t, log), "\n")
+	if !strings.Contains(got, "get deployments.apps,configmaps,sealedsecrets.bitnami.com -n demo") ||
+		!strings.Contains(got, "delete sealedsecret db -n demo") {
+		t.Fatalf("calls:\n%s", got)
+	}
+}
