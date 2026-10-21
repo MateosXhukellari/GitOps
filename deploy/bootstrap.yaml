@@ -50,6 +50,13 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "create", "patch", "update", "delete"]
+  # Encrypted SealedSecrets only; the Sealed Secrets controller turns them into
+  # Secrets. Add "delete" only if sealedsecrets.bitnami.com is in -prune-kinds.
+  # NEVER grant this controller access to "secrets": it must not be able to
+  # read or write plaintext secret values.
+  - apiGroups: ["bitnami.com"]
+    resources: ["sealedsecrets"]
+    verbs: ["get", "list", "create", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
