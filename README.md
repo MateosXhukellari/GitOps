@@ -35,7 +35,7 @@ Every one of these is on by default, and you opt out explicitly:
 | **Dry-run first** | `-dry-run` defaults to **true**: it logs the diff and changes nothing until you pass `-dry-run=false`. |
 | **Namespace allowlist** | Only namespaces in `-namespaces` may be touched. Cluster-scoped kinds (ClusterRole, CRD, ...) are rejected. A `Namespace` object is allowed only if it is allowlisted. |
 | **A bad commit never applies** | One policy violation or unparseable file rejects the whole revision. Nothing is half-applied, and the last good state stays. |
-| **No plaintext Secrets** | `kind: Secret` is rejected unless you pass `-allow-plaintext-secrets`. |
+| **No plaintext Secrets** | `kind: Secret` is rejected unless you pass `-allow-plaintext-secrets`. Commit an encrypted SealedSecret instead (see [Secrets](#secrets)). |
 | **Prune is off by default** | See [Pruning](#pruning). |
 | **Secrets stay out of flags and logs** | Tokens come from environment variables or mounted files only, and are redacted from logs and errors. |
 | **Least-privilege RBAC** | `deploy/bootstrap.yaml` limits the controller to named namespaces and kinds. This is a second, independent layer behind the allowlist. |
@@ -142,6 +142,48 @@ Requests must carry a valid `X-Hub-Signature-256` header. Without a configured
 secret the endpoint accepts unsigned requests, so only run that way on a
 trusted network. Keep polling on as the fallback.
 
+## Secrets
+
+Commit secrets encrypted, as [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets)
+(`apiVersion: bitnami.com/v1alpha1`, `kind: SealedSecret`). This controller
+applies the encrypted object like any other namespaced kind; the Sealed
+Secrets controller in the cluster decrypts it into a normal Secret. This
+controller never sees the plaintext and has no access to Secrets.
+
+**1. Install Sealed Secrets (once, as a cluster admin).** Pin a release:
+
+```bash
+kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.40.0/controller.yaml
+```
+
+Install the matching `kubeseal` CLI from the same release page.
+
+**2. Allow the kind.** `deploy/bootstrap.yaml` already grants the
+controller `get, list, create, patch, update` on `sealedsecrets` in `bitnami.com`.
+Never grant it `secrets`.
+
+**3. Seal and commit.** The plaintext only ever goes through a pipe:
+
+```bash
+read -rs DB_PASSWORD
+kubectl create secret generic db -n demo --from-literal=password="$DB_PASSWORD" \
+  --dry-run=client -o yaml | kubeseal --format yaml > manifests/db-sealed.yaml
+unset DB_PASSWORD
+git add manifests/db-sealed.yaml && git commit -m "add db secret" && git push
+```
+
+The next cycle logs `applied`, and the Secret `db` appears in `demo`. A
+SealedSecret can only be decrypted in the namespace (and under the name) it
+was sealed for.
+
+**Removing one.** Deleting the file from git does **not** delete the
+SealedSecret unless you add `sealedsecrets.bitnami.com` to `-prune-kinds` and
+`delete` to its Role rule. Otherwise delete it by hand:
+`kubectl -n demo delete sealedsecret db` (its Secret goes with it).
+
+**Back up the sealing key.** If the Sealed Secrets controller's key in
+`kube-system` is lost, nothing in git can be decrypted again.
+
 ## Pruning
 
 Off by default. Enable it with `-prune` once you trust the diffs.
@@ -199,9 +241,10 @@ was found and left alone), and it stays `0` while cycles are failing.
 Please read these before pointing it at anything important.
 
 - **Plain YAML only.** No Helm or Kustomize.
-- **Secrets are not supported in git.** Plaintext Secrets are rejected on
-  purpose. Create them out of band, or use an encrypted-secret tool in the
-  cluster (Sealed Secrets, SOPS) once it is supported here.
+- **Secrets only as SealedSecrets.** Plaintext Secrets are rejected on
+  purpose; see [Secrets](#secrets). SOPS is not supported (the controller
+  never decrypts anything). SealedSecrets are not pruned unless you add
+  `sealedsecrets.bitnami.com` to `-prune-kinds`.
 - **Identity fields only.** Each document is parsed with a real YAML parser
   (`gopkg.in/yaml.v3`), but only `apiVersion`, `kind`, `metadata.name` and
   `metadata.namespace` are read; the document is sent to kubectl exactly as
