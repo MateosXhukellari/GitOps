@@ -8,7 +8,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gitops ./cmd/gitops
 
 FROM alpine:3.20 AS kubectl
-ARG KUBECTL_VERSION=v1.35.9
+ARG KUBECTL_VERSION=v1.36.5
 ARG TARGETARCH
 RUN apk add --no-cache curl \
 && curl -fsSL -o /kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH:?}/kubectl" \

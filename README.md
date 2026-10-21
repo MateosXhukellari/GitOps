@@ -124,7 +124,7 @@ Commit `deploy/gitops.yaml` afterwards so git records what is running.
 
 ### Requirements for the cluster
 
-- The image bundles `kubectl` v1.35.9; keep it within one minor version of your
+- The image bundles `kubectl` v1.36.5; keep it within one minor version of your
   cluster, or rebuild the image with a different `KUBECTL_VERSION`.
 - If your Docker Hub repo is private, add an `imagePullSecret`.
 
