@@ -237,6 +237,27 @@ Off by default. Enable it with `-prune` once you trust the diffs.
 
 Existing objects are adopted (labelled) the first time a cycle runs with prune on.
 
+## Adding more resource kinds
+
+Out of the box the Role covers Deployments, Services, ConfigMaps and
+SealedSecrets. To manage another kind (Ingress, StatefulSet, CronJob,
+PersistentVolumeClaim, HorizontalPodAutoscaler, ...):
+
+1. Add it to the Role in `deploy/bootstrap.yaml` with the verbs `get`, `list`,
+   `create`, `patch` and `update`. Add `delete` only if it will be pruned.
+
+   ```yaml
+   - apiGroups: ["networking.k8s.io"]
+     resources: ["ingresses"]
+     verbs: ["get", "list", "create", "patch", "update"]
+   ```
+
+2. If it should be pruned, also add it to `GITOPS_PRUNE_KINDS` (for example
+   `deployments.apps,services,configmaps,ingresses.networking.k8s.io`).
+
+Without step 1, applying that kind fails with a clear `Forbidden` error and
+the revision is not applied.
+
 ## Observability
 
 Every successful cycle logs one line:
