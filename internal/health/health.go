@@ -1,4 +1,4 @@
-// Package health reports whether the Deployments in the desired set have
+// Package health reports whether the workloads in the desired set have
 // rolled out. It only observes: it never changes or rolls back anything.
 package health
 
@@ -43,30 +43,46 @@ func Worst(rs []Resource) string {
 	return worst
 }
 
-// Checker reads Deployments with `kubectl get` (needs only the get verb).
+// Checker reads workloads with `kubectl get` (needs only the get verb).
 type Checker struct {
 	Kubectl string
 }
 
-// Check returns the health of every Deployment in desired. Other kinds are skipped.
+type kind struct {
+	resource string // the name passed to kubectl get
+	group    string // required API group; empty accepts any
+	classify func([]byte) (string, string)
+}
+
+var kinds = map[string]kind{
+	"Deployment":  {resource: "deployment", classify: classify},
+	"StatefulSet": {resource: "statefulset", classify: classifyStatefulSet},
+	"DaemonSet":   {resource: "daemonset", classify: classifyDaemonSet},
+	// Group-qualified so a missing Argo CRD is a NotFound error, never another
+	// API's Rollout.
+	"Rollout": {resource: "rollouts.argoproj.io", group: "argoproj.io", classify: classifyRollout},
+}
+
+// Check returns the health of every supported workload in desired. Other kinds are skipped.
 func (c Checker) Check(ctx context.Context, desired []manifest.Resource) []Resource {
 	var out []Resource
 	for _, r := range desired {
-		if r.Kind != "Deployment" {
+		k, ok := kinds[r.Kind]
+		if !ok || (k.group != "" && !strings.HasPrefix(r.APIVersion, k.group+"/")) {
 			continue
 		}
-		state, reason := c.deployment(ctx, r.Namespace, r.Name)
+		state, reason := c.get(ctx, k, r.Namespace, r.Name)
 		out = append(out, Resource{Kind: r.Kind, Namespace: r.Namespace, Name: r.Name, Health: state, Reason: reason})
 	}
 	return out
 }
 
-func (c Checker) deployment(ctx context.Context, ns, name string) (string, string) {
+func (c Checker) get(ctx context.Context, k kind, ns, name string) (string, string) {
 	bin := c.Kubectl
 	if bin == "" {
 		bin = "kubectl"
 	}
-	args := []string{"get", "deployment", name, "-o", "json"}
+	args := []string{"get", k.resource, name, "-o", "json"}
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
@@ -76,7 +92,7 @@ func (c Checker) deployment(ctx context.Context, ns, name string) (string, strin
 	if err := cmd.Run(); err != nil {
 		return Unknown, fmt.Sprintf("kubectl get: %v: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	return classify(stdout.Bytes())
+	return k.classify(stdout.Bytes())
 }
 
 func classify(data []byte) (string, string) {
@@ -127,4 +143,83 @@ func classify(data []byte) (string, string) {
 		return Healthy, ""
 	}
 	return Progressing, fmt.Sprintf("%d/%d updated, %d/%d available", st.UpdatedReplicas, want, st.AvailableReplicas, want)
+}
+
+type workload struct {
+	Metadata struct {
+		Generation int64 `json:"generation"`
+	} `json:"metadata"`
+	Spec struct {
+		Replicas *int32 `json:"replicas"`
+	} `json:"spec"`
+	Status struct {
+		ObservedGeneration     int64 `json:"observedGeneration"`
+		UpdatedReplicas        int32 `json:"updatedReplicas"`
+		ReadyReplicas          int32 `json:"readyReplicas"`
+		NumberReady            int32 `json:"numberReady"`
+		DesiredNumberScheduled int32 `json:"desiredNumberScheduled"`
+	} `json:"status"`
+}
+
+// StatefulSets and DaemonSets have no progress deadline, so a stuck rollout
+// stays Progressing; only Deployments and Rollouts can report Degraded.
+func classifyStatefulSet(data []byte) (string, string) {
+	var w workload
+	if err := json.Unmarshal(data, &w); err != nil {
+		return Unknown, "parsing kubectl get output: " + err.Error()
+	}
+	want := int32(1)
+	if w.Spec.Replicas != nil {
+		want = *w.Spec.Replicas
+	}
+	st := w.Status
+	if st.ObservedGeneration < w.Metadata.Generation {
+		return Progressing, "waiting for the statefulset controller to observe the new spec"
+	}
+	if st.UpdatedReplicas == want && st.ReadyReplicas == want {
+		return Healthy, ""
+	}
+	return Progressing, fmt.Sprintf("%d/%d updated, %d/%d ready", st.UpdatedReplicas, want, st.ReadyReplicas, want)
+}
+
+func classifyDaemonSet(data []byte) (string, string) {
+	var w workload
+	if err := json.Unmarshal(data, &w); err != nil {
+		return Unknown, "parsing kubectl get output: " + err.Error()
+	}
+	st := w.Status
+	if st.ObservedGeneration < w.Metadata.Generation {
+		return Progressing, "waiting for the daemonset controller to observe the new spec"
+	}
+	if st.NumberReady == st.DesiredNumberScheduled {
+		return Healthy, ""
+	}
+	return Progressing, fmt.Sprintf("%d/%d ready", st.NumberReady, st.DesiredNumberScheduled)
+}
+
+// classifyRollout trusts the Argo Rollouts controller's own phase.
+func classifyRollout(data []byte) (string, string) {
+	var r struct {
+		Status struct {
+			Phase   string `json:"phase"`
+			Message string `json:"message"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return Unknown, "parsing kubectl get output: " + err.Error()
+	}
+	reason := r.Status.Message
+	switch r.Status.Phase {
+	case "Healthy":
+		return Healthy, ""
+	case "Progressing":
+		return Progressing, reason
+	case "Paused":
+		return Progressing, strings.TrimSpace("paused " + reason)
+	case "Degraded":
+		return Degraded, reason
+	case "":
+		return Unknown, "rollout has no status.phase yet"
+	}
+	return Unknown, fmt.Sprintf("unrecognised phase %q", r.Status.Phase)
 }

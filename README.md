@@ -22,7 +22,7 @@ with `kubectl top` on k3s; your numbers will grow with repo size).
 - **Prunes** objects you delete from git (opt-in, heavily guarded).
 - Works with **private repos** through a read-only HTTPS token.
 - Reports status as JSON (`/status`) and Prometheus metrics (`/metrics`),
-  including the rollout [health](#health) of each Deployment.
+  including the rollout [health](#health) of each workload.
 
 It does not build images. A typical flow is: CI builds the image, CI commits the
 new tag into the manifest repo, and this tool deploys it.
@@ -283,24 +283,31 @@ and `gitops_reconcile_failures_total{kind="..."}`.
 
 ### Health
 
-After every successful apply it reads each Deployment in the repo with
-`kubectl get` and reports one of:
+After every successful apply it reads each supported workload in the desired
+set with `kubectl get` and reports one of `Healthy`, `Progressing`, `Degraded`
+or `Unknown`:
 
-| State | Meaning |
-|---|---|
-| `Healthy` | The current spec is observed, and all replicas are updated and available. |
-| `Progressing` | A rollout is still converging, with no failure yet. |
-| `Degraded` | The rollout failed: `Progressing=False` (e.g. `ProgressDeadlineExceeded`) or `ReplicaFailure=True`. |
-| `Unknown` | The object could not be read (missing, or `kubectl` failed). |
+| Kind | Healthy when | Degraded when |
+|---|---|---|
+| Deployment (`apps/v1`) | spec observed, `updatedReplicas` = `availableReplicas` = `spec.replicas` (default 1), no `Available=False` | `Progressing=False` (e.g. `ProgressDeadlineExceeded`) or `ReplicaFailure=True` |
+| StatefulSet (`apps/v1`) | spec observed, `updatedReplicas` = `readyReplicas` = `spec.replicas` (default 1) | never (no progress deadline; a stuck rollout stays `Progressing`) |
+| DaemonSet (`apps/v1`) | spec observed, `numberReady` = `desiredNumberScheduled` | never (as above) |
+| Rollout (`argoproj.io/v1alpha1`) | `status.phase` is `Healthy` (`Progressing` and `Paused` count as `Progressing`) | `status.phase` is `Degraded` |
+
+Anything still converging is `Progressing`. `Unknown` means the object could
+not be read: it is missing, `kubectl` failed, the Argo Rollouts CRD is not
+installed, or a Rollout has no recognised phase. Other kinds are not checked.
 
 `/status` shows the worst state as `health` and lists every non-healthy
-Deployment with a short reason under `unhealthy`. A Deployment that stays
+workload with a short reason under `unhealthy`. A workload that stays
 `Degraded` for more than one cycle logs a `WARN` line each cycle.
 
 Health is **reported only**. It never fails a cycle, changes the sync state
 or rolls anything back. To roll back, `git revert` the commit and the next
-cycle applies the previous state. It needs only the `get` verb on
-deployments, which `deploy/bootstrap.yaml` already grants. Note that a
+cycle applies the previous state. It needs only the `get` verb on each
+checked kind; `deploy/bootstrap.yaml` grants it for Deployments, and any
+other kind you manage needs it anyway (see
+[Adding more resource kinds](#adding-more-resource-kinds)). Note that a
 Deployment with a bad image stays `Progressing` until its
 `progressDeadlineSeconds` (default 600s) has passed, and only then becomes `Degraded`.
 
@@ -333,8 +340,8 @@ Please read these before pointing it at anything important.
   document number, never a silent skip.
 - **Single cluster, single repo path per instance.** Run several instances,
   each with its own `-owner`, for several sources.
-- **Health covers Deployments only**, is reported but never acted on, and
-  there is no UI.
+- **Health covers Deployments, StatefulSets, DaemonSets and Argo Rollouts
+  only**, is reported but never acted on, and there is no UI.
 
 ## Development
 
