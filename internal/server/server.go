@@ -62,6 +62,7 @@ func writeMetrics(w io.Writer, st controller.Status) {
 	if st.Sync == controller.SyncOutOfSync {
 		outOfSync = 1
 	}
+	metric("gitops_unhealthy_resources", "gauge", "Checked resources that are not Healthy.", len(st.Unhealthy))
 	metric("gitops_out_of_sync", "gauge", "1 if the cluster differs from git and was left alone.", outOfSync)
 
 	var lastSuccess int64

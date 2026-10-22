@@ -13,6 +13,7 @@ import (
 
 	"github.com/MateosXhukellari/GitOps/internal/controller"
 	"github.com/MateosXhukellari/GitOps/internal/git"
+	"github.com/MateosXhukellari/GitOps/internal/health"
 )
 
 func sign(secret, body string) string {
@@ -134,6 +135,7 @@ func TestWriteMetricsValues(t *testing.T) {
 		Sync:        controller.SyncOutOfSync,
 		LastSuccess: time.Unix(1700000000, 0),
 		Failures:    map[string]int{controller.KindPolicy: 4},
+		Unhealthy:   []health.Resource{{Name: "a"}, {Name: "b"}},
 	})
 	for _, line := range []string{
 		"gitops_reconcile_total 7\n",
@@ -141,6 +143,7 @@ func TestWriteMetricsValues(t *testing.T) {
 		"gitops_pruned_total 2\n",
 		"gitops_resources 5\n",
 		"gitops_out_of_sync 1\n",
+		"gitops_unhealthy_resources 2\n",
 		"gitops_last_success_timestamp_seconds 1700000000\n",
 		`gitops_reconcile_failures_total{kind="policy"} 4` + "\n",
 		`gitops_reconcile_failures_total{kind="git"} 0` + "\n",

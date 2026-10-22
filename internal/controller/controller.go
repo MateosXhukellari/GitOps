@@ -4,16 +4,24 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/MateosXhukellari/GitOps/internal/git"
+	"github.com/MateosXhukellari/GitOps/internal/health"
 	"github.com/MateosXhukellari/GitOps/internal/manifest"
 	"github.com/MateosXhukellari/GitOps/internal/report"
 )
 
 type Applier interface {
 	Apply(ctx context.Context, revision string, desired []manifest.Resource) error
+}
+
+// HealthChecker reports the health of the desired resources. It only observes;
+// its result never changes the sync result.
+type HealthChecker interface {
+	Check(ctx context.Context, desired []manifest.Resource) []health.Resource
 }
 
 const (
@@ -54,6 +62,9 @@ type Status struct {
 	Failures      map[string]int `json:"failures"`                // total failed cycles by kind
 	Applies       int            `json:"applies"`                 // cycles that changed the cluster
 	Pruned        int            `json:"pruned"`
+
+	Health    string            `json:"health,omitempty"`    // worst of Healthy, Progressing, Unknown, Degraded; empty when disabled
+	Unhealthy []health.Resource `json:"unhealthy,omitempty"` // checked resources that are not Healthy
 }
 
 type Controller struct {
@@ -62,10 +73,12 @@ type Controller struct {
 	Interval time.Duration
 	Applier  Applier
 	Log      *slog.Logger
+	Health   HealthChecker // nil disables health checks
 
-	trigger chan struct{} // webhook -> loop signal, size 1
-	mu      sync.RWMutex  // protects status: loop writes, HTTP reads
-	status  Status
+	trigger  chan struct{}  // webhook -> loop signal, size 1
+	degraded map[string]int // consecutive Degraded cycles per resource; loop-only
+	mu       sync.RWMutex   // protects status: loop writes, HTTP reads
+	status   Status
 }
 
 func New(repo git.Repo, path string, interval time.Duration, applier Applier, log *slog.Logger) *Controller {
@@ -98,6 +111,7 @@ func (c *Controller) Status() Status {
 	for k, v := range c.status.Failures {
 		st.Failures[k] = v
 	}
+	st.Unhealthy = slices.Clone(c.status.Unhealthy)
 	return st // returns a copy
 }
 
@@ -161,10 +175,42 @@ func (c *Controller) Reconcile(ctx context.Context) {
 	c.status.Pruned += out.Pruned()
 	c.mu.Unlock()
 
+	c.checkHealth(ctx, desired)
+
 	c.Log.Info("reconciled",
 		"revision", shortRev(rev), "resources", len(desired), "sync", sync,
 		"applied", out.Applied(), "pruned", out.Pruned(),
 		"took", time.Since(start).Round(time.Millisecond))
+}
+
+func (c *Controller) checkHealth(ctx context.Context, desired []manifest.Resource) {
+	if c.Health == nil {
+		return
+	}
+	results := c.Health.Check(ctx, desired)
+	var unhealthy []health.Resource
+	degraded := map[string]int{}
+	for _, r := range results {
+		if r.Health == health.Healthy {
+			continue
+		}
+		unhealthy = append(unhealthy, r)
+		if r.Health != health.Degraded {
+			continue
+		}
+		key := r.Kind + "/" + r.Namespace + "/" + r.Name
+		degraded[key] = c.degraded[key] + 1
+		if degraded[key] > 1 {
+			c.Log.Warn("resource degraded", "kind", r.Kind, "namespace", r.Namespace, "name", r.Name,
+				"cycles", degraded[key], "reason", r.Reason)
+		}
+	}
+	c.degraded = degraded
+
+	c.mu.Lock()
+	c.status.Health = health.Worst(results)
+	c.status.Unhealthy = unhealthy
+	c.mu.Unlock()
 }
 
 func kindOf(err error) string {

@@ -15,6 +15,7 @@ import (
 	"github.com/MateosXhukellari/GitOps/internal/config"
 	"github.com/MateosXhukellari/GitOps/internal/controller"
 	"github.com/MateosXhukellari/GitOps/internal/git"
+	"github.com/MateosXhukellari/GitOps/internal/health"
 	"github.com/MateosXhukellari/GitOps/internal/kube"
 	"github.com/MateosXhukellari/GitOps/internal/policy"
 	"github.com/MateosXhukellari/GitOps/internal/prune"
@@ -67,6 +68,7 @@ func main() {
 		cfg.Path, cfg.Interval,
 		applier, log,
 	)
+	ctrl.Health = health.Checker{Kubectl: kubectlPath}
 
 	// ctx is cancelled on Ctrl+C or when Kubernetes sends SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
