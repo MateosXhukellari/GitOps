@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.24-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 # Modules first, so this layer stays cached until go.mod or go.sum change.
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gitops ./cmd/gitops
+# Cross-compile natively on the build host; only the kubectl stage runs on the target platform.
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/gitops ./cmd/gitops
 
 FROM alpine:3.20 AS kubectl
 ARG KUBECTL_VERSION=v1.36.5
