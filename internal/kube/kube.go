@@ -164,7 +164,7 @@ func (a Applier) kubectl(ctx context.Context, stdin []byte, args ...string) (str
 
 	err := cmd.Run()
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) { // errors.As asks "is this error an ExitError?"
+	if errors.As(err, &exitErr) {
 		return stdout.String(), exitErr.ExitCode(),
 			fmt.Errorf("kubectl %s: exit %d: %s", args[0], exitErr.ExitCode(), strings.TrimSpace(stderr.String()))
 	}

@@ -89,5 +89,5 @@ func validSignature(secret string, body []byte, header string) bool {
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
-	return hmac.Equal(got, mac.Sum(nil)) // constat-time compare
+	return hmac.Equal(got, mac.Sum(nil)) // constant-time compare
 }

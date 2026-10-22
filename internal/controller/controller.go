@@ -95,7 +95,7 @@ func New(repo git.Repo, path string, interval time.Duration, applier Applier, lo
 	}
 }
 
-// trigger asks from reconcile now. If one is alreadt queued, extra resources are dropped
+// Trigger asks for a reconcile now. If one is already queued, extra triggers are dropped.
 func (c *Controller) Trigger() {
 	select {
 	case c.trigger <- struct{}{}:
@@ -112,7 +112,7 @@ func (c *Controller) Status() Status {
 		st.Failures[k] = v
 	}
 	st.Unhealthy = slices.Clone(c.status.Unhealthy)
-	return st // returns a copy
+	return st
 }
 
 func (c *Controller) Run(ctx context.Context) {
@@ -148,7 +148,6 @@ func (c *Controller) Reconcile(ctx context.Context) {
 		return
 	}
 
-	// only apply when commit changed
 	// last good revision is never overwritten
 	ctx, out := report.With(ctx)
 	if err := c.Applier.Apply(ctx, rev, desired); err != nil {

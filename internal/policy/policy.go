@@ -26,7 +26,7 @@ func New(namespace []string) Policy {
 
 func (p Policy) Empty() bool { return len(p.allowed) == 0 }
 
-// check collects every violation
+// Check collects every violation instead of stopping at the first.
 func (p Policy) Check(rs []manifest.Resource) error {
 	var problems []string
 
