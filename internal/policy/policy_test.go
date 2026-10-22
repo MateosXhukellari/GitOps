@@ -122,7 +122,7 @@ func TestSealedSecretFollowsNamespaceAllowlist(t *testing.T) {
 
 func TestPlaintextSecretPointsToAlternatives(t *testing.T) {
 	err := New([]string{"demo"}).Check([]manifest.Resource{res("Secret", "demo", "db")})
-	if err == nil || !strings.Contains(err.Error(), "SealedSecret") || !strings.Contains(err.Error(), "SOPS") {
-		t.Fatalf("err = %v, want it to mention SealedSecret and SOPS", err)
+	if err == nil || !strings.Contains(err.Error(), "SealedSecret") || strings.Contains(err.Error(), "SOPS") {
+		t.Fatalf("err = %v, want it to point to SealedSecret only (the controller cannot decrypt SOPS)", err)
 	}
 }
