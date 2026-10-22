@@ -304,7 +304,7 @@ Please read these before pointing it at anything important.
   never decrypts anything). SealedSecrets are not pruned unless you add
   `sealedsecrets.bitnami.com` to `-prune-kinds`.
 - **Identity fields only.** Each document is parsed with a real YAML parser
-  (`gopkg.in/yaml.v3`), but only `apiVersion`, `kind`, `metadata.name` and
+  (`go.yaml.in/yaml/v3`), but only `apiVersion`, `kind`, `metadata.name` and
   `metadata.namespace` are read; the document is sent to kubectl exactly as
   written. A document that cannot be identified (invalid YAML, not a mapping,
   missing fields, content on a `---` line) is an error naming the file and
@@ -322,7 +322,7 @@ go vet ./... && gofmt -l .
 ```
 
 Requirements: Go 1.24+, `git`, and `kubectl` on the PATH for a local run. The
-only dependency outside the standard library is `gopkg.in/yaml.v3`.
+only dependency outside the standard library is `go.yaml.in/yaml/v3`.
 
 Run locally against your current kube context (dry-run by default):
 
