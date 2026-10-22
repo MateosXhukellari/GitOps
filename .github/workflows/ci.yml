@@ -18,6 +18,14 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: kubectl for the kustomize render tests
+        env:
+          KUBECTL_VERSION: v1.36.5
+        run: |
+          curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "$(curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256")  /tmp/kubectl" | sha256sum -c -
+          sudo install /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet

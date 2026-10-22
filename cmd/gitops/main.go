@@ -17,6 +17,7 @@ import (
 	"github.com/MateosXhukellari/GitOps/internal/git"
 	"github.com/MateosXhukellari/GitOps/internal/health"
 	"github.com/MateosXhukellari/GitOps/internal/kube"
+	"github.com/MateosXhukellari/GitOps/internal/manifest"
 	"github.com/MateosXhukellari/GitOps/internal/policy"
 	"github.com/MateosXhukellari/GitOps/internal/prune"
 	"github.com/MateosXhukellari/GitOps/internal/server"
@@ -69,6 +70,7 @@ func main() {
 		applier, log,
 	)
 	ctrl.Health = health.Checker{Kubectl: kubectlPath}
+	ctrl.Loader = manifest.Loader{Source: cfg.Source, Render: manifest.Kubectl(kubectlPath)}
 
 	// ctx is cancelled on Ctrl+C or when Kubernetes sends SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

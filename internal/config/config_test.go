@@ -180,3 +180,23 @@ func TestPruneDefaultsAndValidation(t *testing.T) {
 		t.Error("expected an error for a non-numeric GITOPS_PRUNE_MAX")
 	}
 }
+
+func TestSource(t *testing.T) {
+	c, err := Load(required, envMap(nil), noFiles)
+	if err != nil || c.Source != "auto" {
+		t.Fatalf("default source = %q, err = %v", c.Source, err)
+	}
+	c, err = Load(required, envMap(map[string]string{"GITOPS_SOURCE": "kustomize"}), noFiles)
+	if err != nil || c.Source != "kustomize" {
+		t.Fatalf("env source = %q, err = %v", c.Source, err)
+	}
+	var b bytes.Buffer
+	slog.New(slog.NewTextHandler(&b, nil)).Info("configuration", "cfg", c)
+	if !strings.Contains(b.String(), "cfg.source=kustomize") {
+		t.Fatalf("source not logged: %s", b.String())
+	}
+	if _, err := Load(append([]string{"-source", "helm"}, required...), envMap(nil), noFiles); err == nil ||
+		!strings.Contains(err.Error(), `source "helm" must be auto, plain or kustomize`) {
+		t.Fatalf("err = %v", err)
+	}
+}

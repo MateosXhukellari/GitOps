@@ -1,0 +1,7 @@
+kind: Kustomization
+namespace: staging
+resources:
+  - ../../base/web
+  - ../../base/api
+patches:
+  - path: web-replicas.yaml

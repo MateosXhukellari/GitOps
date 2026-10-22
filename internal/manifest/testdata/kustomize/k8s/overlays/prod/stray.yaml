@@ -1,0 +1,7 @@
+# Not listed in kustomization.yaml, so it must not be applied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stray
+data:
+  k: v

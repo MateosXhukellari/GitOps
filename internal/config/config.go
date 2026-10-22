@@ -18,6 +18,7 @@ type Config struct {
 	RepoURL      string
 	Branch       string
 	Path         string
+	Source       string
 	Workdir      string
 	Interval     time.Duration
 	Listen       string
@@ -40,6 +41,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("repo", redactURL(c.RepoURL)),
 		slog.String("branch", c.Branch),
 		slog.String("path", c.Path),
+		slog.String("source", c.Source),
 		slog.Duration("interval", c.Interval),
 		slog.String("listen", c.Listen),
 		slog.Bool("dry_run", c.DryRun),
@@ -89,6 +91,7 @@ func Load(args []string, getenv func(string) string, readFile func(string) ([]by
 	fs.StringVar(&c.RepoURL, "repo", env("GITOPS_REPO", ""), "git repository URL (env GITOPS_REPO)")
 	fs.StringVar(&c.Branch, "branch", env("GITOPS_BRANCH", "main"), "branch to track (env GITOPS_BRANCH)")
 	fs.StringVar(&c.Path, "path", env("GITOPS_PATH", "."), "directory in the repo containing manifests (env GITOPS_PATH)")
+	fs.StringVar(&c.Source, "source", env("GITOPS_SOURCE", "auto"), "how to read -path: auto (kustomize if it has a kustomization file), plain or kustomize (env GITOPS_SOURCE)")
 	fs.StringVar(&c.Workdir, "workdir", env("GITOPS_WORKDIR", "/tmp/gitops/checkout"), "local checkout directory (env GITOPS_WORKDIR)")
 	fs.DurationVar(&c.Interval, "interval", defInterval, "poll interval (env GITOPS_INTERVAL)")
 	fs.StringVar(&c.Listen, "listen", env("GITOPS_LISTEN", ":8080"), "HTTP listen address (env GITOPS_LISTEN)")
@@ -133,6 +136,9 @@ func (c Config) validate() error {
 	}
 	if len(c.Namespaces) == 0 {
 		problems = append(problems, "namespaces is required (-namespaces or GITOPS_NAMESPACES)")
+	}
+	if c.Source != "auto" && c.Source != "plain" && c.Source != "kustomize" {
+		problems = append(problems, fmt.Sprintf("source %q must be auto, plain or kustomize", c.Source))
 	}
 	if c.Interval <= 0 {
 		problems = append(problems, "interval must be positive")

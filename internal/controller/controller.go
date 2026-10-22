@@ -74,6 +74,7 @@ type Controller struct {
 	Applier  Applier
 	Log      *slog.Logger
 	Health   HealthChecker // nil disables health checks
+	Loader   manifest.Loader
 
 	trigger  chan struct{}  // webhook -> loop signal, size 1
 	degraded map[string]int // consecutive Degraded cycles per resource; loop-only
@@ -142,7 +143,7 @@ func (c *Controller) Reconcile(ctx context.Context) {
 		c.fail(KindGit, err)
 		return
 	}
-	desired, err := manifest.Load(c.Repo.Dir, c.Path)
+	desired, source, err := c.Loader.Load(ctx, c.Repo.Dir, c.Path)
 	if err != nil {
 		c.fail(KindManifest, err)
 		return
@@ -177,7 +178,7 @@ func (c *Controller) Reconcile(ctx context.Context) {
 	c.checkHealth(ctx, desired)
 
 	c.Log.Info("reconciled",
-		"revision", shortRev(rev), "resources", len(desired), "sync", sync,
+		"revision", shortRev(rev), "source", source, "resources", len(desired), "sync", sync,
 		"applied", out.Applied(), "pruned", out.Pruned(),
 		"took", time.Since(start).Round(time.Millisecond))
 }

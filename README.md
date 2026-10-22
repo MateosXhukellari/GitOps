@@ -141,6 +141,7 @@ environment variable, which wins over the default.
 | `-repo` | `GITOPS_REPO` | *(required)* | Git repository URL (https for token auth) |
 | `-branch` | `GITOPS_BRANCH` | `main` | Branch to track |
 | `-path` | `GITOPS_PATH` | `.` | Directory in the repo containing manifests |
+| `-source` | `GITOPS_SOURCE` | `auto` | `plain`, `kustomize`, or `auto` (kustomize if `-path` holds a `kustomization.yaml`). Pin `kustomize` in production so a deleted kustomization file fails instead of falling back to plain YAML |
 | `-namespaces` | `GITOPS_NAMESPACES` | *(required)* | Comma-separated namespaces it may manage |
 | `-interval` | `GITOPS_INTERVAL` | `1m` | Poll interval |
 | `-dry-run` | `GITOPS_DRY_RUN` | `true` | Log diffs but never apply |

@@ -71,14 +71,22 @@ func Load(root, path string) ([]Resource, error) {
 		return nil, err
 	}
 
-	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
-	for i := 1; i < len(out); i++ {
-		if out[i].Key() == out[i-1].Key() {
-			return nil, fmt.Errorf("manifest: duplicate resource %s in %s and %s",
-				out[i].Key(), out[i-1].File, out[i].File)
-		}
+	if err := checkDuplicates(out); err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// checkDuplicates sorts rs by key and rejects any key that appears twice.
+func checkDuplicates(rs []Resource) error {
+	sort.Slice(rs, func(i, j int) bool { return rs[i].Key() < rs[j].Key() })
+	for i := 1; i < len(rs); i++ {
+		if rs[i].Key() == rs[i-1].Key() {
+			return fmt.Errorf("manifest: duplicate resource %s in %s and %s",
+				rs[i].Key(), rs[i-1].File, rs[i].File)
+		}
+	}
+	return nil
 }
 
 // Parse splits a multi-document YAML stream into resources.

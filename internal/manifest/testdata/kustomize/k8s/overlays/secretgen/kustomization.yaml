@@ -1,0 +1,7 @@
+namespace: prod
+resources:
+  - ../../base/web
+secretGenerator:
+  - name: db
+    literals:
+      - password=not-a-real-secret
