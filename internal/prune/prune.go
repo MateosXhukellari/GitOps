@@ -15,7 +15,7 @@ import (
 	"github.com/MateosXhukellari/GitOps/internal/report"
 )
 
-const OwnerLabel = "gitops.rta.io/owner"
+const OwnerLabel = "gitops.mateosxhukellari.github.io/owner"
 
 const DefaultMaxDeletes = 10
 

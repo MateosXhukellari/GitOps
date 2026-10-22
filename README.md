@@ -1,7 +1,7 @@
 # gitops
 
 A small GitOps controller for Kubernetes. It watches a git repository of plain
-YAML manifests and keeps a cluster in sync with it: **git is the source of
+YAML manifests or Kustomize overlays and keeps a cluster in sync with it: **git is the source of
 truth, and anything that drifts gets put back.**
 
 It is a lightweight alternative to Argo CD and Flux for teams that want
@@ -16,6 +16,8 @@ with `kubectl top` on k3s; your numbers will grow with repo size).
 ## What it does
 
 - Polls a git repo (and syncs immediately on a signed GitHub webhook).
+- Reads a directory of plain YAML, or renders a [Kustomize](#kustomize) overlay
+  with `kubectl kustomize` on every cycle.
 - Diffs the desired state against the live cluster with `kubectl diff` and applies
   changes with server-side apply.
 - **Self-heals:** a manual `kubectl scale` or edit is reverted on the next cycle.
@@ -35,7 +37,7 @@ Every one of these is on by default, and you opt out explicitly:
 |---|---|
 | **Dry-run first** | `-dry-run` defaults to **true**: it logs the diff and changes nothing until you pass `-dry-run=false`. |
 | **Namespace allowlist** | Only namespaces in `-namespaces` may be touched. Cluster-scoped kinds (ClusterRole, CRD, ...) are rejected. A `Namespace` object is allowed only if it is allowlisted. |
-| **A bad commit never applies** | One policy violation or unparseable file rejects the whole revision. Nothing is half-applied, and the last good state stays. |
+| **A bad commit never applies** | One policy violation, unparseable file, or failed or empty Kustomize render rejects the whole revision. Nothing is half-applied, and the last good state stays. |
 | **No plaintext Secrets** | `kind: Secret` is rejected unless you pass `-allow-plaintext-secrets`. Commit an encrypted SealedSecret instead (see [Secrets](#secrets)). |
 | **Prune is off by default** | See [Pruning](#pruning). |
 | **Secrets stay out of flags and logs** | Tokens come from environment variables or mounted files only, and are redacted from logs and errors. |
@@ -78,11 +80,14 @@ Then uncomment `GITOPS_GIT_TOKEN_FILE` in `deploy/config.yaml`.
 **4. Edit the settings in `deploy/config.yaml`** (the `gitops-config` ConfigMap):
 
 - `GITOPS_REPO`, `GITOPS_BRANCH`, `GITOPS_PATH`: where your manifests live.
+  `GITOPS_PATH` is a plain YAML directory or a Kustomize overlay such as
+  `k8s/overlays/prod`; for an overlay also set `GITOPS_SOURCE: "kustomize"`.
 - `GITOPS_NAMESPACES`: every namespace it may manage (must match `bootstrap.yaml`).
 - Leave `GITOPS_DRY_RUN: "true"` for now.
 
 In `deploy/gitops.yaml`, check that `image:` is a pinned tag such as
-`mateosxh/gitops:v0.1.0` or `sha-<short>`. Prefer a pinned tag to `latest`, so
+`mateosxh/gitops:v0.1.0` or `sha-<short>`. The file also holds the `gitops`
+Service, used only if you expose [webhooks](#deploying-on-every-push). Prefer a pinned tag to `latest`, so
 you know exactly what is running. Files named `deploy/*.local.yaml` are
 gitignored, for copies holding your own values.
 
@@ -163,6 +168,39 @@ history. Set the variable, or point `..._FILE` at a mounted file:
 | `GITOPS_WEBHOOK_SECRET` / `GITOPS_WEBHOOK_SECRET_FILE` | Shared secret to verify GitHub webhooks |
 
 Run `gitops -h` for the full list.
+
+## Kustomize
+
+If `-path` holds a `kustomization.yaml` (or `kustomization.yml`,
+`Kustomization`), every cycle renders it with `kubectl kustomize <path>` and
+only the rendered output counts; other YAML files in that directory are
+ignored. The output goes through the same policy, apply, prune and health
+steps as plain YAML, so a `secretGenerator` (which renders a plaintext
+Secret) is rejected like any other Secret.
+
+The usual layout works, including overlays that pull bases from outside the
+path:
+
+```
+k8s/base/<service>/kustomization.yaml, deployment.yaml, ...
+k8s/overlays/prod/kustomization.yaml       # resources: [../../base/<service>]
+k8s/overlays/prod/<patch>.yaml
+```
+
+Rendering is local and offline. Before kubectl runs, every kustomization
+reachable from the path is checked, and the revision is rejected if any of
+them:
+
+- references a remote base, component or file (URLs, `git@...`, `github.com/...`);
+- uses `helmCharts` (Helm is not supported) or `generators`, `transformers`
+  or `validators` plugins;
+- points to a directory outside the repository checkout, or forms a cycle.
+
+kubectl runs without `--enable-helm`, plugins or exec, and with the default
+load restrictor (patch and config files must live under their
+kustomization's directory). A render that fails, takes over 60 seconds, or
+produces nothing fails the cycle as a `manifest` error, and nothing is
+applied or pruned. A render costs roughly 0.2 s per cycle.
 
 ## Deploying on every push
 
@@ -348,7 +386,7 @@ SealedSecret unless you add `sealedsecrets.bitnami.com` to `-prune-kinds` and
 
 Off by default. Enable it with `-prune` once you trust the diffs.
 
-- It only deletes objects labelled `gitops.rta.io/owner=<owner>`, a label the
+- It only deletes objects labelled `gitops.mateosxhukellari.github.io/owner=<owner>`, a label the
   tool adds to everything it applies. Objects created by hand or by other tools
   carry no label and are never touched.
 - It only looks at the allowlisted namespaces and the kinds in `-prune-kinds`.
@@ -366,30 +404,58 @@ Existing objects are adopted (labelled) the first time a cycle runs with prune o
 ## Adding more resource kinds
 
 Out of the box the Role covers Deployments, Services, ConfigMaps and
-SealedSecrets. To manage another kind (Ingress, StatefulSet, CronJob,
-PersistentVolumeClaim, HorizontalPodAutoscaler, ...):
+SealedSecrets in the allowlisted namespaces. For each extra kind:
 
-1. Add it to the Role in `deploy/bootstrap.yaml` with the verbs `get`, `list`,
-   `create`, `patch` and `update`. Add `delete` only if it will be pruned.
+- [ ] **Role** (`deploy/bootstrap.yaml`): add a rule with the verbs `get`,
+      `list`, `create`, `patch` and `update`. Without it the cycle fails with
+      a `Forbidden` error from `kubectl diff`, before anything is applied.
+- [ ] **Prune** (optional): add `delete` to that rule *and* the kind to
+      `GITOPS_PRUNE_KINDS`. Leave both out to never delete that kind.
+- [ ] **CRDs**: kinds from a CRD (Traefik, Argo Rollouts, ...) need the CRD
+      installed by a cluster admin first; this controller never manages
+      cluster-scoped objects.
+- [ ] **Namespaced only**: the object must live in an allowlisted namespace.
 
-   ```yaml
-   - apiGroups: ["networking.k8s.io"]
-     resources: ["ingresses"]
-     verbs: ["get", "list", "create", "patch", "update"]
-   ```
+| Kind | `apiGroups` | `resources` | `GITOPS_PRUNE_KINDS` entry | Health |
+|---|---|---|---|---|
+| Ingress | `networking.k8s.io` | `ingresses` | `ingresses.networking.k8s.io` | no |
+| Traefik IngressRoute | `traefik.io` | `ingressroutes` | `ingressroutes.traefik.io` | no |
+| Traefik Middleware | `traefik.io` | `middlewares` | `middlewares.traefik.io` | no |
+| NetworkPolicy | `networking.k8s.io` | `networkpolicies` | `networkpolicies.networking.k8s.io` | no |
+| PersistentVolumeClaim | `""` | `persistentvolumeclaims` | `persistentvolumeclaims` (see below) | no |
+| HorizontalPodAutoscaler | `autoscaling` | `horizontalpodautoscalers` | `horizontalpodautoscalers.autoscaling` | no |
+| StatefulSet | `apps` | `statefulsets` | `statefulsets.apps` | yes |
+| DaemonSet | `apps` | `daemonsets` | `daemonsets.apps` | yes |
+| Rollout (Argo) | `argoproj.io` | `rollouts` | `rollouts.argoproj.io` | yes |
 
-2. If it should be pruned, also add it to `GITOPS_PRUNE_KINDS` (for example
-   `deployments.apps,services,configmaps,ingresses.networking.k8s.io`).
+For example, Traefik routes with pruning:
 
-Without step 1, applying that kind fails with a clear `Forbidden` error and
-the revision is not applied.
+```yaml
+- apiGroups: ["traefik.io"]
+  resources: ["ingressroutes", "middlewares"]
+  verbs: ["get", "list", "create", "patch", "update", "delete"]
+```
+
+```
+GITOPS_PRUNE_KINDS: "deployments.apps,services,configmaps,ingressroutes.traefik.io,middlewares.traefik.io"
+```
+
+Two kinds need care:
+
+- **PersistentVolumeClaim:** pruning one can delete its data (depending on the
+  StorageClass reclaim policy). Prefer not to give PVCs `delete` or list them
+  in `GITOPS_PRUNE_KINDS`.
+- **HorizontalPodAutoscaler:** remove `spec.replicas` from the Deployment or
+  StatefulSet it scales, or every cycle resets the replica count the HPA chose.
+
+Older Traefik installs use the `traefik.containo.us` group instead of `traefik.io`.
 
 ## Observability
 
 Every successful cycle logs one line:
 
 ```
-level=INFO msg=reconciled revision=fa13abb resources=3 sync=Synced applied=false pruned=0 took=27ms
+level=INFO msg=reconciled revision=fa13abb source=kustomize resources=3 sync=Synced applied=false pruned=0 took=27ms
 ```
 
 Failures are labelled by kind: `git`, `manifest`, `policy`, `apply` or `prune`.
@@ -444,7 +510,8 @@ See [Alerts](#alerts) for ready-made Prometheus rules.
 
 Please read these before pointing it at anything important.
 
-- **Plain YAML only.** No Helm or Kustomize.
+- **Plain YAML or Kustomize; no Helm.** Kustomize overlays are rendered
+  offline with no remote bases, Helm charts or plugins (see [Kustomize](#kustomize)).
 - **Secrets only as SealedSecrets.** Plaintext Secrets are rejected on
   purpose; see [Secrets](#secrets). SOPS is not supported (the controller
   never decrypts anything). SealedSecrets are not pruned unless you add
@@ -467,7 +534,9 @@ go test -race ./...      # unit tests
 go vet ./... && gofmt -l .
 ```
 
-Requirements: Go 1.24+, `git`, and `kubectl` on the PATH for a local run. The
+Requirements: Go 1.27+, `git`, and `kubectl` on the PATH for a local run.
+The real `kubectl kustomize` render tests are skipped locally without `kubectl`
+(CI always runs them). The
 only dependency outside the standard library is `go.yaml.in/yaml/v3`.
 
 Run locally against your current kube context (dry-run by default):
@@ -483,14 +552,15 @@ Layout:
 cmd/gitops/          main: wiring and graceful shutdown
 internal/config      flags, environment, secrets, validation
 internal/git         clone/fetch with token auth
-internal/manifest    YAML loading and identification
+internal/manifest    YAML loading and identification, Kustomize rendering
 internal/policy      namespace allowlist and kind rules
 internal/kube        diff and server-side apply through kubectl
 internal/prune       guarded deletion of objects removed from git
 internal/controller  the reconcile loop and status
+internal/health      rollout health of Deployments, StatefulSets, DaemonSets, Rollouts
 internal/server      /healthz, /status, /metrics, /webhook
 internal/report      typed failures and per-cycle outcome
-deploy/              bootstrap.yaml (RBAC), config.yaml (settings), gitops.yaml (the Deployment)
+deploy/              bootstrap.yaml (RBAC), config.yaml (settings), gitops.yaml (Deployment and Service)
 scripts/deploy.sh    deploy the CI-built image for the current commit
 ```
 

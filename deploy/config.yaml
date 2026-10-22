@@ -8,6 +8,9 @@ data:
   GITOPS_REPO: "https://github.com/<you>/<manifests>.git"
   GITOPS_BRANCH: "main"
   GITOPS_PATH: "manifests"
+  # A plain YAML directory or a Kustomize overlay (e.g. k8s/overlays/prod).
+  # For an overlay, pin the source so a lost kustomization.yaml fails loudly:
+  # GITOPS_SOURCE: "kustomize"
   GITOPS_NAMESPACES: "demo"
   GITOPS_INTERVAL: "30s"
   GITOPS_DRY_RUN: "true"
