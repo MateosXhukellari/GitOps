@@ -124,6 +124,8 @@ Commit `deploy/gitops.yaml` afterwards so git records what is running.
 
 ### Requirements for the cluster
 
+- Images are published for `linux/amd64` and `linux/arm64` (e.g. Raspberry Pi
+  or Graviton nodes); the runtime picks the right one.
 - The image bundles `kubectl` v1.36.5; keep it within one minor version of your
   cluster, or rebuild the image with a different `KUBECTL_VERSION`.
 - If your Docker Hub repo is private, add an `imagePullSecret`.
@@ -286,7 +288,6 @@ Please read these before pointing it at anything important.
   each with its own `-owner`, for several sources.
 - **No health assessment** (it does not wait for a Deployment to become
   ready) and no UI.
-- **amd64 image only** for now.
 
 ## Development
 
