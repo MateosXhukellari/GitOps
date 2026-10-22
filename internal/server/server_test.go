@@ -161,3 +161,24 @@ func TestWriteMetricsValues(t *testing.T) {
 		}
 	}
 }
+
+type countingController struct{ triggers int }
+
+func (c *countingController) Trigger()                  { c.triggers++ }
+func (c *countingController) Status() controller.Status { return controller.Status{} }
+
+func TestOnlyValidWebhooksTrigger(t *testing.T) {
+	const body = `{"ref":"refs/heads/main"}`
+	for sig, want := range map[string]int{
+		"":                   0,
+		sign("other", body):  0,
+		"sha256=00":          0,
+		sign("s3cret", body): 1,
+	} {
+		c := &countingController{}
+		do(New(c, "s3cret"), "POST", "/webhook", body, map[string]string{"X-Hub-Signature-256": sig})
+		if c.triggers != want {
+			t.Errorf("signature %q: %d triggers, want %d", sig, c.triggers, want)
+		}
+	}
+}

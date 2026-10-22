@@ -61,3 +61,16 @@ spec:
           secret:
             secretName: gitops-git
             optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitops
+  namespace: gitops-system
+spec:
+  selector:
+    app: gitops
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

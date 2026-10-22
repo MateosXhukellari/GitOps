@@ -164,18 +164,143 @@ history. Set the variable, or point `..._FILE` at a mounted file:
 
 Run `gitops -h` for the full list.
 
-## Webhooks (optional)
+## Deploying on every push
 
-Polling works with no network setup. For immediate sync on push, expose port
-8080 (for example through an Ingress) and add a GitHub webhook:
+A push to the tracked branch reaches the cluster in about a second plus the
+apply time: GitHub calls `POST /webhook`, the controller starts a cycle
+straight away, and the cycle fetches, renders, applies and prunes as usual.
+Pushes that arrive while a cycle is running collapse into one follow-up cycle,
+so cycles never overlap. Polling stays on as the fallback for missed
+webhooks; with webhooks set up, `GITOPS_INTERVAL` of `2m` to `5m` is plenty.
 
-- **Payload URL:** `https://<your-host>/webhook`
+### 1. Create the webhook secret
+
+```bash
+kubectl -n gitops-system create secret generic gitops-webhook \
+  --from-literal=secret="$(openssl rand -hex 32)"
+```
+
+Uncomment `GITOPS_WEBHOOK_SECRET_FILE` in `deploy/config.yaml`, apply it and
+restart the controller. With a secret configured, unsigned or wrongly signed
+requests get `401` and never trigger a cycle. Without one the endpoint accepts
+anything (logged as a warning at startup), so never expose it that way.
+
+### 2. Expose only `/webhook`
+
+`deploy/gitops.yaml` includes a `gitops` Service on port 80. Route only the
+webhook path to it; `/status` and `/metrics` stay inside the cluster.
+
+With a standard Ingress (k3s ships Traefik as the default ingress class):
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gitops-webhook
+  namespace: gitops-system
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [gitops.example.com]
+      secretName: gitops-webhook-tls
+  rules:
+    - host: gitops.example.com
+      http:
+        paths:
+          - path: /webhook
+            pathType: Exact
+            backend:
+              service:
+                name: gitops
+                port:
+                  number: 80
+```
+
+Or with a Traefik `IngressRoute`:
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: gitops-webhook
+  namespace: gitops-system
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`gitops.example.com`) && Path(`/webhook`)
+      kind: Rule
+      services:
+        - name: gitops
+          port: 80
+  tls:
+    secretName: gitops-webhook-tls
+```
+
+### 3. Add the GitHub webhook
+
+In the manifest repo: *Settings → Webhooks → Add webhook*.
+
+- **Payload URL:** `https://gitops.example.com/webhook`
 - **Content type:** `application/json`
-- **Secret:** the same value as `GITOPS_WEBHOOK_SECRET`
+- **Secret:** the value stored in `gitops-webhook`
+- **Events:** just the push event
 
-Requests must carry a valid `X-Hub-Signature-256` header. Without a configured
-secret the endpoint accepts unsigned requests, so only run that way on a
-trusted network. Keep polling on as the fallback.
+GitHub shows each delivery and its response code (`202` = accepted).
+
+### Resources on a small node
+
+The defaults in `deploy/gitops.yaml` suit a single small node:
+
+```yaml
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+```
+
+Idle use is a few MiB. Each cycle runs `kubectl` a few times; a Kustomize
+render adds roughly 0.2 s of CPU. Raise the memory limit only for very large
+repos.
+
+### Alerts
+
+Example Prometheus rules:
+
+```yaml
+groups:
+  - name: gitops
+    rules:
+      - alert: GitopsReconcileFailing
+        expr: increase(gitops_reconcile_failures_total[10m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "gitops cycles are failing ({{ $labels.kind }}); check /status lastError"
+      - alert: GitopsStale
+        expr: time() - gitops_last_success_timestamp_seconds > 600
+        labels: { severity: critical }
+        annotations:
+          summary: "no successful gitops cycle for 10 minutes"
+      - alert: GitopsUnhealthyWorkloads
+        expr: gitops_unhealthy_resources > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} workloads not Healthy; see /status unhealthy"
+```
+
+Do not alert on `gitops_out_of_sync` alone: it is only `1` in dry-run (a diff
+was found and left alone), and it stays `0` while cycles are failing.
+
+### Rolling back
+
+Rollback is a git operation; the controller never rolls back on its own.
+
+```bash
+git revert <bad-commit>   # in the manifest repo
+git push                  # the webhook applies the previous state
+```
+
+Do not fix production with `kubectl edit` or `kubectl rollout undo`: the next
+cycle puts back whatever git says. Revert in git, or push a fix forward.
 
 ## Secrets
 
@@ -313,15 +438,7 @@ Deployment with a bad image stays `Progressing` until its
 
 ### Alerting
 
-Alert on either of these:
-
-```promql
-increase(gitops_reconcile_failures_total[10m]) > 0     # any failed cycle
-time() - gitops_last_success_timestamp_seconds > 300   # no good cycle for 5 minutes
-```
-
-Do not alert on `gitops_out_of_sync` alone: it is only `1` in dry-run (a diff
-was found and left alone), and it stays `0` while cycles are failing.
+See [Alerts](#alerts) for ready-made Prometheus rules.
 
 ## Limits
 

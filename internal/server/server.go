@@ -15,7 +15,13 @@ import (
 
 const maxBody = 5 << 20 //5MB
 
-func New(c *controller.Controller, secret string) http.Handler {
+// Controller is the part of *controller.Controller the HTTP server uses.
+type Controller interface {
+	Trigger()
+	Status() controller.Status
+}
+
+func New(c Controller, secret string) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
